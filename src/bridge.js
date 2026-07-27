@@ -282,21 +282,41 @@ async function octupusRelinkLead(leadId) {
  * "no sincronizado" y "no lo sé" nunca deben confundirse (evita duplicados).
  */
 async function octupusFindRemoteId(leadId) {
+  // Buscar la nota de vinculación por su ENLACE, no solo por la marca: las
+  // notas 📥 traídas también contienen "Octupus Lead Sync" y desplazarían a
+  // la nota 🐙 fuera de cualquier ventana por recencia.
   const msgs = await octupusCallKw('mail.message', 'search_read', [], {
     domain: [
       ['model', '=', 'crm.lead'],
       ['res_id', '=', leadId],
       ['body', 'like', 'Octupus Lead Sync'],
+      ['body', 'like', 'my/opportunity/'],
     ],
     fields: ['body'],
     order: 'id desc',
-    limit: 5,
+    limit: 10,
   });
   for (const msg of msgs || []) {
-    const m = String(msg.body || '').match(/my\/opportunity\/(\d+)/);
+    const body = String(msg.body || '');
+    if (body.includes('[odoo#')) continue; // nota traída que cita una URL, no de vinculación
+    const m = body.match(/my\/opportunity\/(\d+)/);
     if (m) return parseInt(m[1], 10);
   }
-  return msgs && msgs.length ? 0 : null;
+
+  // Sin nota con enlace: ¿queda alguna nota 🐙 legado sin ID? (excluyendo traídas)
+  const legado = await octupusCallKw('mail.message', 'search_read', [], {
+    domain: [
+      ['model', '=', 'crm.lead'],
+      ['res_id', '=', leadId],
+      ['body', 'like', 'Octupus Lead Sync'],
+      '!',
+      ['body', 'like', 'odoo#'],
+    ],
+    fields: ['id'],
+    order: 'id desc',
+    limit: 1,
+  });
+  return legado && legado.length ? 0 : null;
 }
 
 /**
@@ -316,8 +336,10 @@ async function octupusFindClaimant(destId) {
       limit: 10,
     });
     for (const m of msgs || []) {
+      const body = String(m.body || '');
+      if (body.includes('[odoo#')) continue; // nota traída que cita la URL, no reclama nada
       // 'like' es substring: verificar coincidencia exacta del id
-      const match = String(m.body || '').match(/my\/opportunity\/(\d+)/);
+      const match = body.match(/my\/opportunity\/(\d+)/);
       if (match && parseInt(match[1], 10) === destId) return m.res_id;
     }
     return null;

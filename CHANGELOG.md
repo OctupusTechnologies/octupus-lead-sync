@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.6 — 2026-07-27
+
+### Corregido
+- **Falso "Sincronizado (sin ID remoto)" tras traer mensajes**: las notas 📥
+  también contienen la marca "Octupus Lead Sync" y desplazaban a la nota 🐙
+  de vinculación fuera de la ventana del detector. Ahora la nota se busca
+  por su enlace `my/opportunity/` (excluyendo las notas traídas), con lo que
+  el estado vuelve a verde sin tocar nada. Misma exclusión aplicada a la
+  comprobación de reclamante.
+
 ## 1.4.5 — 2026-07-27
 
 ### Corregido

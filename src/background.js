@@ -574,7 +574,8 @@ function parseRemoteMessages(result) {
   return messages
     .map((m) => {
       if (!m || !m.id || !m.body) return null;
-      if (m.message_type && m.message_type !== 'comment') return null;
+      // comment = mensajes del chatter; email = correos del cliente (¡los más valiosos!)
+      if (m.message_type && m.message_type !== 'comment' && m.message_type !== 'email') return null;
       // En el formato mail.Store el body llega como tupla ["markup", "<p>…</p>"]
       let body = m.body;
       if (Array.isArray(body)) {

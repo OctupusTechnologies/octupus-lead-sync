@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.2 — 2026-07-27
+
+### Corregido
+- **Traer mensajes** ya incluye los correos del cliente (`message_type:
+  'email'`), que antes se descartaban — solo entraban los comentarios del
+  chatter.
+- Los emails traídos se limpian: se elimina la cadena citada del mensaje
+  anterior y los bloques ocultos (marcados con `data-o-mail-quote` /
+  `display:none`), se normalizan los espacios duros y los mensajes de más
+  de 4000 caracteres se recortan.
+
 ## 1.4.1 — 2026-07-27
 
 ### Corregido

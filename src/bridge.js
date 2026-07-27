@@ -159,10 +159,11 @@ async function octupusPullComments(leadId, remoteId) {
   let count = 0;
   for (const m of resp.messages || []) {
     if (!m || !m.id || done.has(m.id)) continue;
-    const text = octupusHtmlToText(m.body);
+    let text = octupusHtmlToText(m.body);
     if (!text) continue;
     if (text.includes('[src#') || text.includes('Octupus Lead Sync')) continue;
     if (m.author === 'OdooBot') continue;
+    if (text.length > 4000) text = `${text.slice(0, 4000)}\n… [mensaje recortado]`;
     const body = `📥 ${m.author}${m.date ? ` (${m.date})` : ''} en odoo.com vía Octupus Lead Sync [odoo#${m.id}]:\n${text}`;
     try {
       await octupusPostNote(leadId, body, body);
@@ -567,9 +568,16 @@ async function octupusPostNotes(created, portalUrl) {
 /** Convierte el body HTML de un mensaje de Odoo a texto plano legible. */
 function octupusHtmlToText(html) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  // Fuera la cadena citada de los emails (Odoo la marca con data-o-mail-quote)
+  // y los preheaders ocultos
+  doc.querySelectorAll('[data-o-mail-quote], [style*="display:none"]').forEach((el) => el.remove());
   doc.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
   doc.querySelectorAll('p, div, li').forEach((el) => el.append('\n'));
-  return (doc.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+  return (doc.body.textContent || '')
+    .replace(/ /g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**

@@ -184,7 +184,9 @@ function buildPortalValues(lead, origin, sourceLabel) {
 
   return {
     title: lead.name,
-    contact_name: lead.contact_name || lead.partner_name || '',
+    // create_opp_portal exige contact_name no vacío ("All fields are
+    // required!"): fallback al email o a un guion si el lead no tiene nombre
+    contact_name: lead.contact_name || lead.partner_name || lead.email_from || '-',
     description: partes.join('\n'),
   };
 }

@@ -157,7 +157,10 @@ async function octupusPullComments(leadId, remoteId) {
   const done = new Set([...(pulled[key] || []), ...existentes]);
 
   let count = 0;
-  for (const m of resp.messages || []) {
+  // chatter_fetch devuelve de nuevo → viejo: publicar en orden cronológico
+  // para que el chatter del lead se lea de arriba abajo correctamente
+  const mensajes = (resp.messages || []).slice().sort((a, b) => (a.id || 0) - (b.id || 0));
+  for (const m of mensajes) {
     if (!m || !m.id || done.has(m.id)) continue;
     let text = octupusHtmlToText(m.body);
     if (!text) continue;
@@ -603,6 +606,9 @@ async function octupusReadComments(leadId) {
     return [];
   }
 
+  // Los 50 más RECIENTES (id desc) — con 'id asc' un lead con >50 mensajes
+  // enviaría los antiguos y nunca los nuevos — y luego se invierte el orden
+  // para publicarlos cronológicamente
   const msgs = await octupusCallKw('mail.message', 'search_read', [], {
     domain: [
       ['model', '=', 'crm.lead'],
@@ -611,10 +617,12 @@ async function octupusReadComments(leadId) {
       ['subtype_id', 'in', subtypeIds],
     ],
     fields: ['id', 'body', 'author_id', 'date', 'subtype_id'],
-    order: 'id asc',
+    order: 'id desc',
     limit: 50,
   });
   return (msgs || [])
+    .slice()
+    .reverse()
     .map((m) => {
       const text = octupusHtmlToText(m.body);
       if (!text || text.includes('Octupus Lead Sync')) return null;

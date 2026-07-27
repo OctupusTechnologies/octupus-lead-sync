@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.4 — 2026-07-27
+
+### Corregido
+- **Orden cronológico en la traída**: los mensajes remotos llegan de nuevo a
+  viejo y se publicaban tal cual, dejando la conversación invertida en el
+  chatter del lead. Ahora se publican en orden cronológico.
+- **Ventana de subida**: se enviaban los 50 mensajes más antiguos del lead
+  (`id asc`), con lo que en hilos largos los recientes no viajaban nunca.
+  Ahora se toman los 50 más recientes y se publican en orden.
+- **Leads sin nombre de contacto**: `create_opp_portal` exige contact_name
+  no vacío (verificado en el fuente del módulo); ahora hay fallback al
+  email o a un guion, en vez de fallar con "All fields are required!".
+
 ## 1.4.3 — 2026-07-27
 
 ### Cambiado

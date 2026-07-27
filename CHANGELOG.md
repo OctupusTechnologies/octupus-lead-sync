@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 — 2026-07-27
+
+### Añadido
+- **Búsqueda por email**: la localización de oportunidades en el portal usa
+  criterios escalonados — título+email (lo más específico), título solo, y
+  email solo. El email sobrevive a renombres del título, pero identifica al
+  cliente y no al negocio, así que la coincidencia por email solo se acepta
+  cuando es única; si el cliente tiene varias oportunidades es ambiguo y no
+  se vincula. Aplica al envío, al Re-vincular y a la auto-curación.
+
 ## 1.2.2 — 2026-07-27
 
 ### Cambiado

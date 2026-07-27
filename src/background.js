@@ -40,7 +40,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'FIND_REMOTE') {
     (async () => {
       const cfg = await getConfig();
-      const destId = await findRemotePortalOpportunity(cfg, msg.title);
+      const destId = await findRemotePortalOpportunity(cfg, msg.title, msg.email);
       return { ok: true, destId, portalUrl: cfg.portalUrl };
     })()
       .then(sendResponse)
@@ -312,39 +312,64 @@ function extractOpportunities(html) {
   return out;
 }
 
-/**
- * Tercera capa anti-duplicados: localiza la oportunidad por título en el
- * portal. Vía rápida: website_crm_partner_assign concede a los usuarios
- * portal LECTURA sobre crm.lead (acotada por regla de registro a sus
- * oportunidades asignadas), así que basta un search_read por nombre — con
- * active_test:false para incluir también las perdidas. Si la instancia no
- * lo permite, se cae al recorrido del listado HTML.
- */
-async function findRemotePortalOpportunity(cfg, title) {
-  const name = String(title || '').trim();
-  if (!name) return null;
+/** Escapa los comodines de ilike (%, _) para una comparación literal. */
+function escapeIlike(value) {
+  return String(value).replace(/([%_\\])/g, '\\$1');
+}
 
-  try {
-    const rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/search_read', {
-      model: 'crm.lead',
-      method: 'search_read',
-      args: [],
-      kwargs: {
-        domain: [
-          ['name', '=', name],
-          ['type', '=', 'opportunity'],
-        ],
-        fields: ['id'],
-        limit: 2,
-        order: 'id desc',
-        context: { active_test: false },
-      },
-    });
-    if (Array.isArray(rows)) return rows.length ? rows[0].id : null;
-  } catch (e) {
-    /* sin permiso de lectura en esa instancia: usar el listado HTML */
+/**
+ * Tercera capa anti-duplicados: localiza la oportunidad en el portal.
+ * website_crm_partner_assign concede a los usuarios portal LECTURA sobre
+ * crm.lead (acotada por regla de registro a sus asignadas), así que se busca
+ * con search_read y active_test:false (incluye perdidas), por criterios de
+ * más a menos específicos:
+ *   1. título + email  → mismo negocio, aunque cambie uno de los dos
+ *   2. título          → comportamiento clásico
+ *   3. email solo      → sobrevive a renombres del título, pero identifica
+ *      al cliente y no al negocio: solo se acepta si la coincidencia es
+ *      ÚNICA (si el cliente tiene varias oportunidades, es ambiguo).
+ * La comprobación de reclamante (bridge) sigue siendo la guarda final.
+ * Si la instancia no permite leer crm.lead, se cae al listado HTML.
+ */
+async function findRemotePortalOpportunity(cfg, title, email) {
+  const name = String(title || '').trim();
+  const mail = String(email || '').trim();
+  if (!name && !mail) return null;
+
+  const OPP = ['type', '=', 'opportunity'];
+  const porNombre = ['name', '=', name];
+  const porEmail = ['email_from', '=ilike', escapeIlike(mail)];
+
+  const intentos = [];
+  if (name && mail) intentos.push({ domain: [porNombre, porEmail, OPP], soloSiUnica: false });
+  if (name) intentos.push({ domain: [porNombre, OPP], soloSiUnica: false });
+  if (mail) intentos.push({ domain: [porEmail, OPP], soloSiUnica: true });
+
+  for (const { domain, soloSiUnica } of intentos) {
+    let rows;
+    try {
+      rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/search_read', {
+        model: 'crm.lead',
+        method: 'search_read',
+        args: [],
+        kwargs: {
+          domain,
+          fields: ['id'],
+          limit: 2,
+          order: 'id desc',
+          context: { active_test: false },
+        },
+      });
+    } catch (e) {
+      /* sin permiso de lectura en esa instancia: usar el listado HTML */
+      return name ? findRemotePortalOpportunityHtml(cfg, name) : null;
+    }
+    if (!Array.isArray(rows)) break;
+    if (rows.length === 1) return rows[0].id;
+    if (rows.length > 1 && !soloSiUnica) return rows[0].id;
+    // >1 resultado con criterio de solo-email: ambiguo → probar siguiente/ninguno
   }
-  return findRemotePortalOpportunityHtml(cfg, title);
+  return null;
 }
 
 /**
@@ -425,8 +450,9 @@ async function syncLeads(origin, leads) {
       let warn = null;
       if (!destId) {
         // Auto-curación: la respuesta no traía el ID, pero la oportunidad
-        // recién creada debe aparecer en el portal con este título
-        destId = await findRemotePortalOpportunity(cfg, lead.name);
+        // recién creada debe aparecer en el portal con este título (aún sin
+        // email: el contacto se rellena después)
+        destId = await findRemotePortalOpportunity(cfg, lead.name, null);
         if (!destId) warn = 'El portal no devolvió el ID remoto: usa Re-vincular más tarde';
       }
       if (destId) {

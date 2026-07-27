@@ -123,7 +123,11 @@ async function octupusRelinkLead(leadId) {
   if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
   const lead = leads[0];
 
-  const found = await chrome.runtime.sendMessage({ type: 'FIND_REMOTE', title: lead.name });
+  const found = await chrome.runtime.sendMessage({
+    type: 'FIND_REMOTE',
+    title: lead.name,
+    email: lead.email_from,
+  });
   if (!found || !found.ok) {
     return { ok: false, error: (found && found.error) || 'Error buscando en el portal' };
   }
@@ -276,7 +280,11 @@ async function octupusSyncIds(ids) {
   const toCreate = [];
   let portalUrl = null;
   for (const lead of toProcess) {
-    const found = await chrome.runtime.sendMessage({ type: 'FIND_REMOTE', title: lead.name });
+    const found = await chrome.runtime.sendMessage({
+      type: 'FIND_REMOTE',
+      title: lead.name,
+      email: lead.email_from,
+    });
     if (found && found.portalUrl) portalUrl = found.portalUrl;
     const candidateId = found && found.ok ? found.destId : null;
     if (candidateId) {

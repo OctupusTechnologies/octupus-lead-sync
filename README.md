@@ -54,9 +54,11 @@ cuándo.
      se reenvía (aunque lo haya enviado otro compañero desde su navegador).
    - **Portal de odoo.com**: `website_crm_partner_assign` concede a los
      usuarios portal lectura sobre `crm.lead` (limitada a sus oportunidades
-     asignadas), así que se busca con un `search_read` por nombre exacto y
-     `active_test: false` (incluye las perdidas). Si la instancia no lo
-     permite, se recorre el listado HTML ordenado por nombre como fallback.
+     asignadas), así que se busca con `search_read` y `active_test: false`
+     (incluye las perdidas), por criterios escalonados: **título + email**,
+     **título**, y **email solo** (este último únicamente si la coincidencia
+     es única — el email identifica al cliente, no al negocio). Si la
+     instancia no lo permite, se recorre el listado HTML como fallback.
      Si hay coincidencia **y ningún otro lead reclama ya ese ID** (se
      comprueba en las notas 🐙 del origen), se **vincula** la oportunidad
      existente sin crear duplicado y sin tocar los datos remotos. Si otro

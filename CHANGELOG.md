@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1 — 2026-07-27
+
+### Corregido
+- **Búsqueda de oportunidades en el portal**: el controlador real de
+  `/my/opportunities` (website_crm_partner_assign) no soporta búsqueda por
+  texto — el parámetro `search` que usábamos se ignoraba y solo se miraba la
+  primera página. Ahora se recorre el listado ordenado por nombre
+  (`sortby=name`, hasta 10 páginas, con corte alfabético) y se repasa además
+  con `filterby=lost`, porque las oportunidades perdidas no aparecen en el
+  listado activo y provocaban duplicados.
+
 ## 1.2.0 — 2026-07-27
 
 Endurecimiento de la lógica tras auditoría completa.

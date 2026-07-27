@@ -53,8 +53,11 @@ cuándo.
      "Octupus Lead Sync" en el lead y se extrae el ID remoto; si existe, no
      se reenvía (aunque lo haya enviado otro compañero desde su navegador).
    - **Portal de odoo.com**: como usuario portal no se puede hacer
-     `search_read` de `crm.lead`, así que se busca en el HTML de
-     `/my/opportunities?search=<título>` y se compara el slug del enlace
+     `search_read` de `crm.lead` y el controlador de `/my/opportunities` no
+     soporta búsqueda por texto, así que se recorre el listado **ordenado
+     por nombre** (`sortby=name`, hasta 10 páginas, cortando al rebasar
+     alfabéticamente el título) y también con `filterby=lost` (las perdidas
+     no salen del listado activo). Se compara el slug del enlace
      (`/my/opportunity/<slug>-<id>`) con el slug del título del lead. Si
      coincide exactamente **y ningún otro lead reclama ya ese ID** (se
      comprueba en las notas 🐙 del origen), se **vincula** la oportunidad

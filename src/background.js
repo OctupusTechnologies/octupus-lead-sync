@@ -289,9 +289,10 @@ function odooSlug(text) {
     .replace(/^-+|-+$/g, '');
 }
 
-function matchOpportunityInHtml(html, name) {
-  const target = odooSlug(name);
-  if (!target) return null;
+/** Extrae, en orden de aparición, los pares {slug, id} de los enlaces /my/opportunity/. */
+function extractOpportunities(html) {
+  const out = [];
+  const seen = new Set();
   const re = /\/my\/opportunity\/([^"'?#\s]+)/g;
   let m;
   while ((m = re.exec(html)) !== null) {
@@ -303,33 +304,47 @@ function matchOpportunityInHtml(html, name) {
     }
     const parts = seg.match(/^(?:(.+)-)?(\d+)$/);
     if (!parts || !parts[1]) continue;
-    if (parts[1] === target) return parseInt(parts[2], 10);
+    const id = parseInt(parts[2], 10);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ slug: parts[1], id });
   }
-  return null;
+  return out;
 }
 
 /**
- * Tercera capa anti-duplicados: busca la oportunidad en el listado del portal
- * (/my/opportunities) por título. Un usuario portal no puede hacer search_read
- * sobre crm.lead en odoo.com, así que se busca en el HTML del portal y se
- * compara el slug del enlace con el del título (coincidencia exacta).
+ * Tercera capa anti-duplicados: localiza la oportunidad por título en el
+ * portal. El controlador de /my/opportunities (website_crm_partner_assign)
+ * NO soporta búsqueda por texto — solo sortby/filterby/paginación — así que
+ * se recorre el listado ordenado por nombre (sortby=name) cortando al rebasar
+ * alfabéticamente el título buscado. Se repasa también con filterby=lost,
+ * porque las oportunidades perdidas no aparecen en el listado activo.
  */
+const PORTAL_MAX_PAGES = 10;
+
 async function findRemotePortalOpportunity(cfg, title) {
-  const name = String(title || '').trim();
-  if (!name) return null;
+  const target = odooSlug(title);
+  if (!target) return null;
   const base = cfg.portalUrl.replace(/\/+$/, '');
-  const urls = [
-    `${base}/my/opportunities?search_in=all&search=${encodeURIComponent(name)}`,
-    `${base}/my/opportunities`,
-  ];
-  for (const url of urls) {
-    try {
-      const resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) continue;
-      const id = matchOpportunityInHtml(await resp.text(), name);
-      if (id) return id;
-    } catch (e) {
-      /* probar la siguiente URL */
+
+  for (const filterby of ['all', 'lost']) {
+    for (let page = 1; page <= PORTAL_MAX_PAGES; page++) {
+      const path = page === 1 ? '/my/opportunities' : `/my/opportunities/page/${page}`;
+      const url = `${base}${path}?sortby=name${filterby === 'lost' ? '&filterby=lost' : ''}`;
+      let html = null;
+      try {
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) break;
+        html = await resp.text();
+      } catch (e) {
+        break;
+      }
+      const entries = extractOpportunities(html);
+      if (!entries.length) break; // fin del listado
+      const hit = entries.find((e) => e.slug === target);
+      if (hit) return hit.id;
+      // Listado alfabético: si el último ya supera al objetivo, no está
+      if (entries[entries.length - 1].slug > target) break;
     }
   }
   return null;

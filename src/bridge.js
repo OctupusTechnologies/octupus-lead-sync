@@ -167,9 +167,12 @@ async function octupusPullComments(leadId, remoteId) {
     if (text.includes('[src#') || text.includes('Octupus Lead Sync')) continue;
     if (m.author === 'OdooBot') continue;
     if (text.length > 4000) text = `${text.slice(0, 4000)}\n… [mensaje recortado]`;
-    const body = `📥 ${m.author}${m.date ? ` (${m.date})` : ''} en odoo.com vía Octupus Lead Sync [odoo#${m.id}]:\n${text}`;
+    const encabezado = `📥 ${m.author}${m.date ? ` (${m.date})` : ''} en odoo.com vía Octupus Lead Sync [odoo#${m.id}]:`;
+    const bodyText = `${encabezado}\n${text}`;
+    const bodyHtml =
+      `<b>${octupusEscapeHtml(encabezado)}</b><br/>` + octupusEscapeHtml(text).replace(/\n/g, '<br/>');
     try {
-      await octupusPostNote(leadId, body, body);
+      await octupusPostNote(leadId, bodyHtml, bodyText);
       done.add(m.id);
       count++;
     } catch (err) {
@@ -671,32 +674,34 @@ async function octupusGetSubtypeId(xmlid) {
   return octupusSubtypeCache[xmlid];
 }
 
+/** Escapa texto para incrustarlo en un body HTML. */
+function octupusEscapeHtml(text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /**
- * Publica la nota interna con tres estrategias, de más a menos fiable:
- *  1) /mail/message/post — el endpoint que usa el propio chatter (Odoo 15+),
- *     con texto plano (el servidor escapa el HTML recibido por RPC).
- *  2) mail.message.create directo — conserva el HTML, pero en Odoo 17/18 la
- *     creación directa puede estar restringida.
- *  3) crm.lead.message_post por call_kw — texto plano, versiones antiguas.
+ * Publica la nota interna con tres estrategias, de más a menos completa:
+ *  1) message_post con body_is_html:true — conserva el HTML y pasa por el
+ *     flujo completo del chatter (la nota aparece en vivo, Odoo 17+).
+ *  2) mail.message.create directo — conserva el HTML (verificado en Odoo 18)
+ *     pero sin notificación en vivo del chatter.
+ *  3) /mail/message/post — el endpoint del chatter; escapa el HTML, así que
+ *     va el texto plano (los saltos de línea pueden verse colapsados).
  * Si todo falla, lanza un error con el detalle de cada intento.
  */
 async function octupusPostNote(srcId, bodyHtml, bodyText) {
   const intentos = [];
 
   try {
-    await octupusJsonRpc('/mail/message/post', {
-      thread_model: 'crm.lead',
-      thread_id: srcId,
-      post_data: {
-        body: bodyText,
-        message_type: 'comment',
-        subtype_xmlid: 'mail.mt_note',
-      },
-      context: {},
+    await octupusCallKw('crm.lead', 'message_post', [[srcId]], {
+      body: bodyHtml,
+      body_is_html: true,
+      message_type: 'comment',
+      subtype_xmlid: 'mail.mt_note',
     });
     return;
   } catch (err) {
-    intentos.push(`/mail/message/post: ${err.message || err}`);
+    intentos.push(`message_post(body_is_html): ${err.message || err}`);
   }
 
   try {
@@ -716,14 +721,19 @@ async function octupusPostNote(srcId, bodyHtml, bodyText) {
   }
 
   try {
-    await octupusCallKw('crm.lead', 'message_post', [[srcId]], {
-      body: bodyText,
-      message_type: 'comment',
-      subtype_xmlid: 'mail.mt_note',
+    await octupusJsonRpc('/mail/message/post', {
+      thread_model: 'crm.lead',
+      thread_id: srcId,
+      post_data: {
+        body: bodyText,
+        message_type: 'comment',
+        subtype_xmlid: 'mail.mt_note',
+      },
+      context: {},
     });
     return;
   } catch (err) {
-    intentos.push(`message_post: ${err.message || err}`);
+    intentos.push(`/mail/message/post: ${err.message || err}`);
   }
 
   throw new Error(intentos.join(' | '));

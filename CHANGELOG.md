@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.5 — 2026-07-27
+
+### Corregido
+- **Formato de las notas**: se publican ahora como HTML real vía
+  `message_post(body_is_html=True)` (Odoo 17+), con `mail.message.create`
+  directo como fallback (verificado en la instancia) y el texto plano como
+  último recurso. Las notas traídas muestran encabezado en negrita y saltos
+  de línea reales (antes los \n se colapsaban en un bloque), y las notas 🐙
+  recuperan la negrita y el enlace clicable al portal.
+
 ## 1.4.4 — 2026-07-27
 
 ### Corregido

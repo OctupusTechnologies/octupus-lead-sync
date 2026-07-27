@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#875a7b"/>
+      <stop offset="1" stop-color="#4d3049"/>
+    </linearGradient>
+  </defs>
+
+  <!-- fondo -->
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+
+  <!-- cabeza: cúpula con base plana -->
+  <path d="M34 70 V54 a30 30 0 0 1 60 0 V70 Z" fill="#ffffff"/>
+
+  <!-- tentáculos -->
+  <g fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round">
+    <path d="M40 66 C38 82 26 86 24 98"/>
+    <path d="M52 69 C51 86 44 92 44 104"/>
+    <path d="M64 70 C64 87 64 93 64 106"/>
+    <path d="M76 69 C77 86 84 92 84 104"/>
+    <path d="M88 66 C90 82 102 86 104 98"/>
+  </g>
+
+  <!-- ojos y sonrisa -->
+  <circle cx="53" cy="52" r="5" fill="#4d3049"/>
+  <circle cx="75" cy="52" r="5" fill="#4d3049"/>
+  <path d="M56 61 q8 7 16 0" fill="none" stroke="#4d3049" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

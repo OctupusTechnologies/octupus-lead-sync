@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.7 — 2026-07-27
+
+### Añadido
+- **Logo de la extensión**: pulpo blanco sobre degradado morado de la marca
+  (SVG fuente en `icons/icon.svg`, PNG en 16/32/48/128 px), declarado en el
+  manifest para la barra de herramientas, chrome://extensions y la Web Store.
+
 ## 1.4.6 — 2026-07-27
 
 ### Corregido

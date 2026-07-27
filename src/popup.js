@@ -16,18 +16,7 @@ function fmtDate(iso) {
 }
 
 async function render() {
-  const { config = {}, log = [] } = await chrome.storage.local.get(['config', 'log']);
-  const enabled = config.enabled !== false;
-
-  const state = $('state');
-  if (enabled) {
-    state.textContent = 'Activada';
-    state.className = 'badge on';
-  } else {
-    state.textContent = 'Desactivada';
-    state.className = 'badge off';
-  }
-  $('enabled').checked = enabled;
+  const { log = [] } = await chrome.storage.local.get('log');
 
   const list = $('log');
   list.innerHTML = '';
@@ -170,13 +159,6 @@ async function runManualAction(tabId, leadId, type, remoteId) {
 }
 
 $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
-
-$('enabled').addEventListener('change', async (ev) => {
-  const { config = {} } = await chrome.storage.local.get('config');
-  config.enabled = ev.target.checked;
-  await chrome.storage.local.set({ config });
-  render();
-});
 
 render();
 renderSession();

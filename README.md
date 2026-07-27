@@ -1,17 +1,20 @@
 # 🐙 Octupus Lead Sync — Extensión de Chrome
 
-Extensión que detecta cuándo conviertes un **lead a oportunidad** en Odoo
-(p. ej. `octupus.odoo.com`) y lo registra automáticamente en el **portal de
-partners de www.odoo.com** usando el método `crm.lead/create_opp_portal`,
-reutilizando la sesión que ya tienes iniciada en odoo.com.
+Extensión para enviar **leads del CRM de Odoo** (p. ej. `octupus.odoo.com`)
+al **portal de partners de www.odoo.com** con un clic, usando el método
+`crm.lead/create_opp_portal` y reutilizando la sesión que ya tienes iniciada
+en odoo.com. El envío es **siempre manual**: tú decides qué lead viaja y
+cuándo.
 
 ## Cómo funciona
 
-1. Un script inyectado en la página de Odoo intercepta la llamada RPC del
-   asistente **"Convertir a oportunidad"** (`crm.lead2opportunity.partner`,
-   incluida la conversión masiva desde la vista de lista).
-2. Al confirmarse la conversión, lee los datos del lead usando **tu propia
-   sesión de Odoo** (no necesita credenciales de la instancia origen).
+1. Al abrir un lead en el backend de Odoo aparece un **widget flotante**
+   (abajo a la derecha) que consulta el chatter y muestra el estado:
+   **"🐙 Enviar a odoo.com"** si no está sincronizado, o
+   **"🐙 Sincronizado · #ID"** (clic → abre la oportunidad en el portal) con
+   el botón **"↻ Actualizar datos y comentarios"** si ya lo está.
+2. Al pulsar Enviar, lee los datos del lead usando **tu propia sesión de
+   Odoo** (no necesita credenciales de la instancia origen).
 3. El service worker crea la oportunidad en el portal de partners con:
    ```
    POST https://www.odoo.com/web/dataset/call_kw/crm.lead/create_opp_portal
@@ -83,23 +86,19 @@ Clic derecho en el icono → **Opciones** (o botón del popup):
 
 ## Uso
 
-**Automático**: trabaja en el CRM con normalidad. Al confirmar **"Convertir a
-oportunidad"**, la extensión crea la oportunidad en el portal, muestra un
-contador verde en el icono y deja la nota con el ID remoto en el lead.
+**Widget flotante (recomendado)**: abre cualquier lead en Odoo (vista
+formulario). Abajo a la derecha aparece el widget:
 
-**Manual**: abre cualquier lead en Odoo (vista formulario) y pulsa el icono
-de la extensión. El popup lee el chatter del lead y muestra:
+- **"🐙 Enviar a odoo.com"** (morado) → crea la oportunidad en el portal,
+  rellena el contacto, deja la nota y sincroniza los comentarios.
+- **"🐙 Sincronizado · #ID"** (verde) → el lead ya está en el portal; clic
+  para abrir la oportunidad. Debajo, **"↻ Actualizar datos y comentarios"**
+  vuelve a empujar el contacto actual y los mensajes nuevos del chatter.
+- El resultado de cada acción se muestra en un aviso sobre el botón.
 
-- Si **no** está sincronizado → botón **"Enviar lead #N a odoo.com"**
-  (funciona con leads sin convertir y con la sincronización automática
-  desactivada).
-- Si **ya** está sincronizado → el ID remoto y el botón **"Actualizar datos
-  del lead #N en odoo.com"**, que vuelve a empujar los datos de contacto
-  actuales a la oportunidad remota (útil si completaste el lead después de
-  enviarlo).
-
-En el **popup** ves además el estado de la sesión de odoo.com, los últimos
-envíos y el interruptor para activar/desactivar la sincronización automática.
+**Popup**: pulsa el icono de la extensión con un lead abierto para las
+mismas acciones, además del estado de la sesión de odoo.com y el historial
+de envíos y errores.
 
 ## Estructura
 
@@ -107,21 +106,22 @@ envíos y el interruptor para activar/desactivar la sincronización automática.
 octupus-lead-sync/
 ├── manifest.json        # Manifest V3 (permisos: storage, cookies)
 ├── src/
-│   ├── injector.js      # (MAIN world) intercepta las RPC de conversión
-│   ├── bridge.js        # (ISOLATED) lee el lead con tu sesión y avisa al SW
-│   ├── background.js    # service worker: create_opp_portal con la sesión
+│   ├── bridge.js        # content script: widget flotante, lectura del lead
+│   │                    #   y del chatter con tu sesión, notas 🐙
+│   ├── background.js    # service worker: create_opp_portal, contacto y
+│   │                    #   comentarios contra el portal con tu sesión
 │   ├── options.html/js  # configuración del portal
-│   └── popup.html/js    # estado de sesión y últimos envíos
+│   └── popup.html/js    # estado de sesión, acciones y últimos envíos
 └── README.md
 ```
 
 ## Limitaciones conocidas
 
 - Requiere sesión activa en www.odoo.com; si caduca, el envío falla y queda
-  registrado en el popup (el lead no se marca como enviado, se puede
-  reintentar volviendo a convertirlo o recargando).
+  registrado en el popup (el lead no se marca como enviado; reintenta desde
+  el widget).
 - Funciona en instancias origen `https://*.odoo.com`. Para un dominio propio
   hay que añadir su patrón en `content_scripts.matches` del `manifest.json`.
-- Compatible con Odoo 13–18 como origen (intercepta tanto XHR como `fetch`).
-- Si la conversión hace una **fusión (merge)** de varios leads, se envía la
-  oportunidad resultante que siga existiendo entre los registros activos.
+- El widget detecta el lead por la URL (`#id=…&model=crm.lead` en Odoo ≤16 y
+  `/odoo/crm/<id>` en Odoo 17+); en un registro sin guardar (URL sin id) no
+  aparece.

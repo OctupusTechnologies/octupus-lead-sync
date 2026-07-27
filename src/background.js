@@ -12,7 +12,6 @@
 'use strict';
 
 const DEFAULTS = {
-  enabled: true,
   portalUrl: 'https://www.odoo.com',
   sourceLabel: 'Octupus',
 };
@@ -21,7 +20,7 @@ let rpcId = 1;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'SYNC_LEADS') {
-    syncLeads(msg.origin, msg.leads, Boolean(msg.manual))
+    syncLeads(msg.origin, msg.leads)
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
     return true; // respuesta asíncrona
@@ -309,10 +308,8 @@ async function createOppPortal(cfg, lead, origin) {
   return null;
 }
 
-async function syncLeads(origin, leads, manual = false) {
+async function syncLeads(origin, leads) {
   const cfg = await getConfig();
-  // El interruptor solo gobierna el envío automático: el botón manual siempre funciona
-  if (!cfg.enabled && !manual) return { ok: false, error: 'Sincronización desactivada en opciones' };
 
   const { sent = {} } = await chrome.storage.local.get('sent');
   const already = leads

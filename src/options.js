@@ -1,7 +1,6 @@
 'use strict';
 
 const DEFAULTS = {
-  enabled: true,
   portalUrl: 'https://www.odoo.com',
   sourceLabel: 'Octupus',
   syncNotes: true,
@@ -14,13 +13,11 @@ async function load() {
   const cfg = { ...DEFAULTS, ...config };
   $('portalUrl').value = cfg.portalUrl;
   $('sourceLabel').value = cfg.sourceLabel;
-  $('enabled').checked = cfg.enabled;
   $('syncNotes').checked = cfg.syncNotes !== false;
 }
 
 function readForm() {
   return {
-    enabled: $('enabled').checked,
     portalUrl: ($('portalUrl').value.trim() || DEFAULTS.portalUrl).replace(/\/+$/, ''),
     sourceLabel: $('sourceLabel').value.trim() || 'Octupus',
     syncNotes: $('syncNotes').checked,

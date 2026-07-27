@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.0 — 2026-07-27
+
+### Añadido
+- **Widget flotante** en el backend de Odoo (abajo a la derecha) al abrir un
+  lead: muestra el estado de sincronización leído del chatter
+  ("🐙 Enviar a odoo.com" / "🐙 Sincronizado · #ID") y permite enviar o
+  actualizar datos y comentarios con un clic, con avisos de resultado.
+  Clic en el estado verde abre la oportunidad en el portal. Sigue el
+  cambio de registro de la SPA de Odoo sin recargar.
+
+### Eliminado
+- **Envío automático al convertir lead → oportunidad**: la sincronización es
+  ahora 100% manual (widget o popup). Desaparecen `src/injector.js` (la
+  intercepción de RPC) y el interruptor "Sincronización activada" de las
+  opciones y el popup.
+
 ## 1.0.0 — 2026-07-27
 
 Primera versión funcional.

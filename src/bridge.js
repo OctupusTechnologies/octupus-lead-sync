@@ -1,15 +1,14 @@
 /**
  * Octupus Lead Sync — bridge (ISOLATED world)
  *
- * - Flujo automático: recibe el aviso del injector cuando se convierte un
- *   lead a oportunidad y lo sincroniza con el portal de odoo.com.
- * - Flujo manual: el popup pide detectar/enviar el lead abierto en la pestaña.
+ * Sincronización 100% manual:
+ * - Widget flotante en el backend de Odoo: muestra el estado del lead abierto
+ *   (sincronizado o no) y permite enviarlo/actualizarlo con un clic.
+ * - El popup de la extensión ofrece las mismas acciones.
  * - Tras cada envío correcto deja una nota interna en el chatter del lead de
  *   origen con el ID remoto, usando la sesión Odoo del propio usuario.
  */
 'use strict';
-
-const OCTUPUS_SEEN = new Set();
 
 const OCTUPUS_LEAD_FIELDS = [
   'name',
@@ -35,31 +34,7 @@ const OCTUPUS_LEAD_FIELDS = [
   'team_id',
 ];
 
-// --- Flujo automático: conversión detectada por injector.js ---
-window.addEventListener('message', async (event) => {
-  if (event.source !== window) return;
-  const data = event.data;
-  if (!data || data.type !== 'OCTUPUS_LEAD_CONVERTED' || !Array.isArray(data.leadIds)) return;
-
-  const ids = data.leadIds.filter((id) => Number.isInteger(id) && !OCTUPUS_SEEN.has(id));
-  if (!ids.length) return;
-  ids.forEach((id) => OCTUPUS_SEEN.add(id));
-
-  try {
-    const result = await octupusSyncIds(ids, { manual: false });
-    if (result && result.ok) {
-      console.info('[Octupus Lead Sync] Sincronizados:', result.created);
-    } else if (result && result.error) {
-      console.warn('[Octupus Lead Sync] Error al sincronizar:', result.error);
-    }
-  } catch (err) {
-    // Permitir reintento si falla la lectura (p. ej. red)
-    ids.forEach((id) => OCTUPUS_SEEN.delete(id));
-    console.warn('[Octupus Lead Sync] No se pudieron sincronizar los leads:', err);
-  }
-});
-
-// --- Flujo manual: peticiones desde el popup ---
+// --- Peticiones desde el popup ---
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'GET_CURRENT_LEAD') {
     (async () => {
@@ -85,26 +60,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const leadId = octupusCurrentLeadId();
       if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
-      const remoteId = await octupusFindRemoteId(leadId);
-      if (remoteId === null) {
-        return { ok: false, error: 'Este lead aún no está sincronizado (no hay nota 🐙 en el chatter)' };
-      }
-      if (!remoteId) {
-        return { ok: false, error: 'La nota del chatter no contiene el ID remoto: no se puede actualizar' };
-      }
-      const leads = await octupusReadLeads([leadId], { onlyOpportunities: false });
-      if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
-      const result = await chrome.runtime.sendMessage({
-        type: 'UPDATE_LEAD',
-        origin: window.location.origin,
-        lead: leads[0],
-        destId: remoteId,
-      });
-      if (result && result.ok) {
-        const cr = await octupusSyncComments(leadId, remoteId, leads[0].name);
-        result.commentsPosted = (cr && cr.posted) || 0;
-      }
-      return result;
+      return octupusUpdateLead(leadId);
     })()
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
@@ -112,6 +68,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   return false;
 });
+
+/** Actualiza datos de contacto y comentarios de un lead ya sincronizado. */
+async function octupusUpdateLead(leadId) {
+  const remoteId = await octupusFindRemoteId(leadId);
+  if (remoteId === null) {
+    return { ok: false, error: 'Este lead aún no está sincronizado (no hay nota 🐙 en el chatter)' };
+  }
+  if (!remoteId) {
+    return { ok: false, error: 'La nota del chatter no contiene el ID remoto: no se puede actualizar' };
+  }
+  const leads = await octupusReadLeads([leadId], { onlyOpportunities: false });
+  if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
+  const result = await chrome.runtime.sendMessage({
+    type: 'UPDATE_LEAD',
+    origin: window.location.origin,
+    lead: leads[0],
+    destId: remoteId,
+  });
+  if (result && result.ok) {
+    result.destId = result.destId || remoteId;
+    const cr = await octupusSyncComments(leadId, remoteId, leads[0].name);
+    result.commentsPosted = (cr && cr.posted) || 0;
+  }
+  return result;
+}
 
 /**
  * El chatter es la fuente de verdad de sincronización: busca la nota
@@ -461,3 +442,201 @@ async function octupusPostNote(srcId, bodyHtml, bodyText) {
 
   throw new Error(intentos.join(' | '));
 }
+
+// ─────────────────────────────────────────
+// Widget flotante en el backend de Odoo
+// ─────────────────────────────────────────
+
+let octupusUi = null;
+let octupusUiLeadId = null;
+let octupusUiBusy = false;
+let octupusToastTimer = null;
+const octupusRemoteCache = new Map(); // leadId -> remoteId | 0 | null
+
+function octupusBtnCss(bg, color, fontSize) {
+  return [
+    'border:none',
+    'border-radius:999px',
+    'padding:10px 16px',
+    `font-size:${fontSize}`,
+    'font-weight:600',
+    'cursor:pointer',
+    `background:${bg}`,
+    `color:${color}`,
+    'box-shadow:0 6px 18px rgba(0,0,0,.28)',
+    'display:flex',
+    'align-items:center',
+    'gap:6px',
+  ].join(';');
+}
+
+function octupusEnsureUi() {
+  if (octupusUi && document.getElementById('octupus-lead-sync-widget')) return octupusUi;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'octupus-lead-sync-widget';
+  wrap.style.cssText = [
+    'position:fixed',
+    'bottom:24px',
+    'right:24px',
+    'z-index:2147483000',
+    'display:none',
+    'flex-direction:column',
+    'align-items:flex-end',
+    'gap:8px',
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+  ].join(';');
+
+  const toast = document.createElement('div');
+  toast.style.cssText =
+    'display:none;max-width:300px;background:#1f2430;color:#fff;padding:8px 12px;' +
+    'border-radius:10px;font-size:12px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.28);';
+
+  const update = document.createElement('button');
+  update.type = 'button';
+  update.style.cssText = octupusBtnCss('#e8eaf0', '#1f2430', '12px');
+  update.style.display = 'none';
+
+  const main = document.createElement('button');
+  main.type = 'button';
+  main.style.cssText = octupusBtnCss('#714b67', '#fff', '13px');
+
+  wrap.append(toast, update, main);
+  document.documentElement.appendChild(wrap);
+  octupusUi = { wrap, main, update, toast };
+  return octupusUi;
+}
+
+function octupusToast(text, ms = 6000) {
+  const ui = octupusEnsureUi();
+  ui.toast.textContent = text;
+  ui.toast.style.display = 'block';
+  clearTimeout(octupusToastTimer);
+  if (ms) {
+    octupusToastTimer = setTimeout(() => {
+      ui.toast.style.display = 'none';
+    }, ms);
+  }
+}
+
+function octupusRenderWidget(leadId, remoteId, loading) {
+  const ui = octupusEnsureUi();
+  if (!leadId) {
+    ui.wrap.style.display = 'none';
+    return;
+  }
+  ui.wrap.style.display = 'flex';
+  const { main, update } = ui;
+  main.disabled = Boolean(loading || octupusUiBusy);
+  update.disabled = main.disabled;
+
+  if (loading) {
+    main.textContent = '🐙 Comprobando…';
+    main.style.background = '#9aa0ab';
+    main.style.color = '#fff';
+    main.onclick = null;
+    update.style.display = 'none';
+  } else if (remoteId) {
+    main.textContent = `🐙 Sincronizado · #${remoteId}`;
+    main.style.background = '#2e7d32';
+    main.style.color = '#fff';
+    main.onclick = async () => {
+      const { config = {} } = await chrome.storage.local.get('config');
+      const base = (config.portalUrl || 'https://www.odoo.com').replace(/\/+$/, '');
+      window.open(`${base}/my/opportunity/${remoteId}`, '_blank');
+    };
+    update.textContent = '↻ Actualizar datos y comentarios';
+    update.style.display = 'flex';
+    update.onclick = () => octupusUiUpdate(leadId, remoteId);
+  } else if (remoteId === 0) {
+    main.textContent = '🐙 Sincronizado (ID desconocido)';
+    main.style.background = '#b26a00';
+    main.style.color = '#fff';
+    main.onclick = null;
+    update.style.display = 'none';
+  } else {
+    main.textContent = '🐙 Enviar a odoo.com';
+    main.style.background = '#714b67';
+    main.style.color = '#fff';
+    main.onclick = () => octupusUiSend(leadId);
+    update.style.display = 'none';
+  }
+}
+
+async function octupusUiSend(leadId) {
+  if (octupusUiBusy) return;
+  octupusUiBusy = true;
+  octupusRenderWidget(leadId, null, true);
+  octupusToast('Enviando lead a odoo.com…', 0);
+  try {
+    const r = await octupusSyncIds([leadId], { manual: true });
+    if (r && r.ok && Array.isArray(r.created) && r.created.length) {
+      const d = r.created[0];
+      const extra = r.commentsPosted ? ` · ${r.commentsPosted} comentario(s)` : '';
+      octupusToast(
+        d.existing
+          ? `Ya existía en el portal: vinculado con ID ${d.destId || '?'}${extra}`
+          : `✔ Enviado — ID remoto ${d.destId || '?'}${extra}`
+      );
+    } else if (r && r.ok && Array.isArray(r.already) && r.already.length) {
+      octupusToast(`Ya estaba sincronizado — ID remoto ${r.already[0].destId || '?'}`);
+    } else {
+      octupusToast(`✖ ${(r && r.error) || 'No se pudo enviar'}`);
+    }
+  } catch (err) {
+    octupusToast(`✖ ${(err && err.message) || err}`);
+  }
+  octupusUiBusy = false;
+  octupusRemoteCache.delete(leadId);
+  await octupusUiRefresh(leadId);
+}
+
+async function octupusUiUpdate(leadId, remoteId) {
+  if (octupusUiBusy) return;
+  octupusUiBusy = true;
+  octupusRenderWidget(leadId, remoteId, true);
+  octupusToast('Actualizando datos y comentarios…', 0);
+  try {
+    const r = await octupusUpdateLead(leadId);
+    if (r && r.ok) {
+      const extra = r.commentsPosted ? ` · ${r.commentsPosted} comentario(s) enviados` : '';
+      octupusToast(`✔ Datos actualizados (ID remoto ${r.destId || remoteId})${extra}`);
+    } else {
+      octupusToast(`✖ ${(r && r.error) || 'No se pudo actualizar'}`);
+    }
+  } catch (err) {
+    octupusToast(`✖ ${(err && err.message) || err}`);
+  }
+  octupusUiBusy = false;
+  await octupusUiRefresh(leadId);
+}
+
+async function octupusUiRefresh(leadId) {
+  let remoteId;
+  if (octupusRemoteCache.has(leadId)) {
+    remoteId = octupusRemoteCache.get(leadId);
+  } else {
+    remoteId = await octupusFindRemoteId(leadId);
+    octupusRemoteCache.set(leadId, remoteId);
+  }
+  if (octupusUiLeadId === leadId) octupusRenderWidget(leadId, remoteId, false);
+}
+
+/**
+ * El cliente web de Odoo es una SPA (cambia de registro sin recargar), así
+ * que se sondea la URL cada segundo y se refresca el widget al cambiar de lead.
+ */
+async function octupusUiTick() {
+  const leadId = octupusCurrentLeadId();
+  if (leadId === octupusUiLeadId) return;
+  octupusUiLeadId = leadId;
+  if (!leadId) {
+    if (octupusUi) octupusUi.wrap.style.display = 'none';
+    return;
+  }
+  octupusRenderWidget(leadId, null, true);
+  await octupusUiRefresh(leadId);
+}
+
+setInterval(octupusUiTick, 1000);
+octupusUiTick();

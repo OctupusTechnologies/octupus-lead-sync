@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1 — 2026-07-27
+
+### Corregido
+- Al traer mensajes, el body del formato mail.Store (Odoo 18/19) llega como
+  tupla `["markup", "<p>…</p>"]`: se desenvuelve correctamente (antes las
+  notas traídas empezaban con el artefacto `markup,`).
+
 ## 1.4.0 — 2026-07-27
 
 ### Añadido

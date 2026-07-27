@@ -575,6 +575,12 @@ function parseRemoteMessages(result) {
     .map((m) => {
       if (!m || !m.id || !m.body) return null;
       if (m.message_type && m.message_type !== 'comment') return null;
+      // En el formato mail.Store el body llega como tupla ["markup", "<p>…</p>"]
+      let body = m.body;
+      if (Array.isArray(body)) {
+        body = body[0] === 'markup' && body.length > 1 ? body.slice(1).join('') : body.join('');
+      }
+      if (!body || typeof body !== 'string') return null;
       let author = null;
       if (Array.isArray(m.author_id)) author = m.author_id[1];
       else if (m.author && typeof m.author === 'object') author = m.author.name || partnerName(m.author.id);
@@ -582,7 +588,7 @@ function parseRemoteMessages(result) {
       else if (m.author_id && typeof m.author_id === 'object') {
         author = m.author_id.name || partnerName(m.author_id.id);
       }
-      return { id: m.id, body: m.body, author: author || 'Odoo', date: m.date || m.datetime || '' };
+      return { id: m.id, body, author: author || 'Odoo', date: m.date || m.datetime || '' };
     })
     .filter(Boolean);
 }

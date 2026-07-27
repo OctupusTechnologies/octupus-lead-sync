@@ -314,15 +314,48 @@ function extractOpportunities(html) {
 
 /**
  * Tercera capa anti-duplicados: localiza la oportunidad por título en el
- * portal. El controlador de /my/opportunities (website_crm_partner_assign)
- * NO soporta búsqueda por texto — solo sortby/filterby/paginación — así que
- * se recorre el listado ordenado por nombre (sortby=name) cortando al rebasar
- * alfabéticamente el título buscado. Se repasa también con filterby=lost,
- * porque las oportunidades perdidas no aparecen en el listado activo.
+ * portal. Vía rápida: website_crm_partner_assign concede a los usuarios
+ * portal LECTURA sobre crm.lead (acotada por regla de registro a sus
+ * oportunidades asignadas), así que basta un search_read por nombre — con
+ * active_test:false para incluir también las perdidas. Si la instancia no
+ * lo permite, se cae al recorrido del listado HTML.
+ */
+async function findRemotePortalOpportunity(cfg, title) {
+  const name = String(title || '').trim();
+  if (!name) return null;
+
+  try {
+    const rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/search_read', {
+      model: 'crm.lead',
+      method: 'search_read',
+      args: [],
+      kwargs: {
+        domain: [
+          ['name', '=', name],
+          ['type', '=', 'opportunity'],
+        ],
+        fields: ['id'],
+        limit: 2,
+        order: 'id desc',
+        context: { active_test: false },
+      },
+    });
+    if (Array.isArray(rows)) return rows.length ? rows[0].id : null;
+  } catch (e) {
+    /* sin permiso de lectura en esa instancia: usar el listado HTML */
+  }
+  return findRemotePortalOpportunityHtml(cfg, title);
+}
+
+/**
+ * Fallback: el controlador de /my/opportunities no soporta búsqueda por
+ * texto — solo sortby/filterby/paginación — así que se recorre el listado
+ * ordenado por nombre (sortby=name) cortando al rebasar alfabéticamente el
+ * título, y se repasa con filterby=lost (las perdidas no salen del activo).
  */
 const PORTAL_MAX_PAGES = 10;
 
-async function findRemotePortalOpportunity(cfg, title) {
+async function findRemotePortalOpportunityHtml(cfg, title) {
   const target = odooSlug(title);
   if (!target) return null;
   const base = cfg.portalUrl.replace(/\/+$/, '');

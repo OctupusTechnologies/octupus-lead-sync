@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.2 — 2026-07-27
+
+### Cambiado
+- **Búsqueda de oportunidades en el portal, vía rápida**: resulta que
+  `website_crm_partner_assign` concede a los usuarios portal lectura sobre
+  `crm.lead` (acotada por regla de registro a sus asignadas), así que la
+  búsqueda por título ahora es un único `search_read` por nombre exacto con
+  `active_test: false` (incluye perdidas) — una llamada JSON-RPC en lugar de
+  recorrer hasta 20 páginas HTML. El recorrido del listado queda solo como
+  fallback para instancias sin ese permiso. Ventaja extra: coincidencia por
+  nombre real, no por aproximación de slug.
+
 ## 1.2.1 — 2026-07-27
 
 ### Corregido

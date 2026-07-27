@@ -52,14 +52,12 @@ cuándo.
    - **Chatter (fuente de verdad)**: antes de enviar se busca la nota
      "Octupus Lead Sync" en el lead y se extrae el ID remoto; si existe, no
      se reenvía (aunque lo haya enviado otro compañero desde su navegador).
-   - **Portal de odoo.com**: como usuario portal no se puede hacer
-     `search_read` de `crm.lead` y el controlador de `/my/opportunities` no
-     soporta búsqueda por texto, así que se recorre el listado **ordenado
-     por nombre** (`sortby=name`, hasta 10 páginas, cortando al rebasar
-     alfabéticamente el título) y también con `filterby=lost` (las perdidas
-     no salen del listado activo). Se compara el slug del enlace
-     (`/my/opportunity/<slug>-<id>`) con el slug del título del lead. Si
-     coincide exactamente **y ningún otro lead reclama ya ese ID** (se
+   - **Portal de odoo.com**: `website_crm_partner_assign` concede a los
+     usuarios portal lectura sobre `crm.lead` (limitada a sus oportunidades
+     asignadas), así que se busca con un `search_read` por nombre exacto y
+     `active_test: false` (incluye las perdidas). Si la instancia no lo
+     permite, se recorre el listado HTML ordenado por nombre como fallback.
+     Si hay coincidencia **y ningún otro lead reclama ya ese ID** (se
      comprueba en las notas 🐙 del origen), se **vincula** la oportunidad
      existente sin crear duplicado y sin tocar los datos remotos. Si otro
      lead la reclama, se asume que es un negocio distinto con el mismo

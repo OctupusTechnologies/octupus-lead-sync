@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Octupus Lead Sync",
+  "version": "1.0.0",
+  "description": "Detecta la conversión de leads a oportunidad en Odoo y los envía automáticamente al CRM de la web (origen Octupus).",
+  "permissions": ["storage", "cookies"],
+  "host_permissions": ["https://*.odoo.com/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.odoo.com/*"],
+      "js": ["src/injector.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*.odoo.com/*"],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Octupus Lead Sync"
+  },
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  }
+}

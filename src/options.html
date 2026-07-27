@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Octupus Lead Sync — Opciones</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 560px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1f2430;
+    }
+    h1 { font-size: 1.3rem; }
+    fieldset {
+      border: 1px solid #d5d9e2;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      padding: 1rem;
+    }
+    legend { font-weight: 600; padding: 0 .4rem; }
+    label { display: block; margin: .6rem 0 .2rem; font-size: .9rem; font-weight: 500; }
+    input[type="text"], input[type="url"] {
+      width: 100%;
+      padding: .45rem .6rem;
+      border: 1px solid #c4c9d4;
+      border-radius: 6px;
+      box-sizing: border-box;
+      font-size: .9rem;
+    }
+    .hint { font-size: .78rem; color: #6b7280; margin-top: .15rem; }
+    .info {
+      background: #f0f4ff;
+      border: 1px solid #c8d4f5;
+      border-radius: 8px;
+      padding: .7rem .9rem;
+      font-size: .85rem;
+      margin-bottom: 1rem;
+    }
+    .row { display: flex; gap: .6rem; align-items: center; margin-top: 1rem; }
+    button {
+      padding: .5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .9rem;
+    }
+    #save { background: #714b67; color: #fff; }
+    #test { background: #e8eaf0; color: #1f2430; }
+    #status { margin-top: .8rem; font-size: .88rem; min-height: 1.2em; }
+    #status.ok { color: #2e7d32; }
+    #status.error { color: #c62828; }
+    .check { display: flex; align-items: center; gap: .5rem; margin-top: .4rem; }
+    .check label { margin: 0; }
+  </style>
+</head>
+<body>
+  <h1>🐙 Octupus Lead Sync — Configuración</h1>
+  <div class="info">
+    No se usa clave API: la extensión reutiliza la <strong>sesión que ya tienes
+    iniciada en www.odoo.com</strong> (cookie <code>session_id</code>) para crear
+    la oportunidad en el portal de partners con
+    <code>crm.lead/create_opp_portal</code>. Solo necesitas estar logueado en
+    odoo.com con este perfil de Chrome.
+  </div>
+
+  <fieldset>
+    <legend>Portal destino</legend>
+    <label for="portalUrl">URL del portal</label>
+    <input type="url" id="portalUrl" placeholder="https://www.odoo.com" />
+    <div class="hint">Normalmente https://www.odoo.com (portal de partners de Odoo).</div>
+
+    <label for="sourceLabel">Etiqueta de origen</label>
+    <input type="text" id="sourceLabel" value="Octupus" />
+    <div class="hint">Se añade como "Origen: …" en la descripción de la oportunidad creada.</div>
+
+    <div class="check">
+      <input type="checkbox" id="enabled" checked />
+      <label for="enabled">Sincronización activada</label>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="syncNotes" checked />
+      <label for="syncNotes">Enviar también las notas internas como comentarios</label>
+    </div>
+    <div class="hint">
+      Incluye lo escrito con "Registrar nota" en el chatter del lead. Se
+      publica en el chatter de la oportunidad del portal de odoo.com (visible
+      para Odoo). Las notas de la propia extensión nunca se envían.
+    </div>
+  </fieldset>
+
+  <div class="row">
+    <button id="save">Guardar</button>
+    <button id="test">Probar sesión</button>
+  </div>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

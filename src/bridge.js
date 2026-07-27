@@ -38,19 +38,23 @@ const OCTUPUS_LEAD_FIELDS = [
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'GET_CURRENT_LEAD') {
     (async () => {
-      const leadId = octupusCurrentLeadId();
+      const leadId = await octupusCurrentLeadId();
       if (!leadId) return { leadId: null };
-      return { leadId, remoteId: await octupusFindRemoteId(leadId) };
+      try {
+        return { leadId, remoteId: await octupusFindRemoteId(leadId) };
+      } catch (e) {
+        return { leadId, remoteId: null, readError: true };
+      }
     })()
       .then(sendResponse)
-      .catch(() => sendResponse({ leadId: octupusCurrentLeadId(), remoteId: null }));
+      .catch(() => sendResponse({ leadId: null }));
     return true;
   }
   if (msg && msg.type === 'SEND_CURRENT_LEAD') {
     (async () => {
-      const leadId = octupusCurrentLeadId();
+      const leadId = await octupusCurrentLeadId();
       if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
-      return octupusSyncIds([leadId], { manual: true });
+      return octupusSyncIds([leadId]);
     })()
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
@@ -58,9 +62,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === 'UPDATE_CURRENT_LEAD') {
     (async () => {
-      const leadId = octupusCurrentLeadId();
+      const leadId = await octupusCurrentLeadId();
       if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
       return octupusUpdateLead(leadId);
+    })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
+  }
+  if (msg && msg.type === 'RELINK_CURRENT_LEAD') {
+    (async () => {
+      const leadId = await octupusCurrentLeadId();
+      if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
+      return octupusRelinkLead(leadId);
     })()
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
@@ -71,14 +85,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 /** Actualiza datos de contacto y comentarios de un lead ya sincronizado. */
 async function octupusUpdateLead(leadId) {
-  const remoteId = await octupusFindRemoteId(leadId);
+  let remoteId;
+  try {
+    remoteId = await octupusFindRemoteId(leadId);
+  } catch (err) {
+    return { ok: false, error: `No se pudo leer el chatter del lead: ${(err && err.message) || err}` };
+  }
   if (remoteId === null) {
     return { ok: false, error: 'Este lead aún no está sincronizado (no hay nota 🐙 en el chatter)' };
   }
   if (!remoteId) {
-    return { ok: false, error: 'La nota del chatter no contiene el ID remoto: no se puede actualizar' };
+    return { ok: false, error: 'La nota del chatter no contiene el ID remoto: usa Re-vincular' };
   }
-  const leads = await octupusReadLeads([leadId], { onlyOpportunities: false });
+  const leads = await octupusReadLeads([leadId]);
   if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
   const result = await chrome.runtime.sendMessage({
     type: 'UPDATE_LEAD',
@@ -95,36 +114,98 @@ async function octupusUpdateLead(leadId) {
 }
 
 /**
+ * Vía de escape: para leads con nota sin ID (o tras borrar la oportunidad
+ * remota), re-busca en el portal por título y reescribe la nota con el ID.
+ * Nunca crea nada nuevo.
+ */
+async function octupusRelinkLead(leadId) {
+  const leads = await octupusReadLeads([leadId]);
+  if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
+  const lead = leads[0];
+
+  const found = await chrome.runtime.sendMessage({ type: 'FIND_REMOTE', title: lead.name });
+  if (!found || !found.ok) {
+    return { ok: false, error: (found && found.error) || 'Error buscando en el portal' };
+  }
+  if (!found.destId) {
+    return {
+      ok: false,
+      error:
+        'No hay en el portal ninguna oportunidad con este título. Si se borró, ' +
+        'elimina la nota 🐙 del chatter para poder reenviar el lead.',
+    };
+  }
+  const claimant = await octupusFindClaimant(found.destId);
+  if (claimant && claimant !== leadId) {
+    return { ok: false, error: `La oportunidad #${found.destId} ya está vinculada al lead #${claimant}` };
+  }
+  await chrome.runtime.sendMessage({
+    type: 'MARK_LINKED',
+    origin: window.location.origin,
+    leadId,
+    destId: found.destId,
+    name: lead.name,
+  });
+  await octupusPostNotes([{ srcId: leadId, destId: found.destId, existing: true }], found.portalUrl);
+  return { ok: true, destId: found.destId };
+}
+
+/**
  * El chatter es la fuente de verdad de sincronización: busca la nota
  * "Octupus Lead Sync" en el lead y extrae el id remoto de su enlace
  * …/my/opportunity/<id>. Devuelve el id, 0 si hay nota sin id parseable,
- * o null si no hay nota (o no se pudo leer).
+ * o null si NO hay nota. Si el chatter no se puede leer, LANZA el error:
+ * "no sincronizado" y "no lo sé" nunca deben confundirse (evita duplicados).
  */
 async function octupusFindRemoteId(leadId) {
+  const msgs = await octupusCallKw('mail.message', 'search_read', [], {
+    domain: [
+      ['model', '=', 'crm.lead'],
+      ['res_id', '=', leadId],
+      ['body', 'like', 'Octupus Lead Sync'],
+    ],
+    fields: ['body'],
+    order: 'id desc',
+    limit: 5,
+  });
+  for (const msg of msgs || []) {
+    const m = String(msg.body || '').match(/my\/opportunity\/(\d+)/);
+    if (m) return parseInt(m[1], 10);
+  }
+  return msgs && msgs.length ? 0 : null;
+}
+
+/**
+ * ¿Qué lead reclama ya esta oportunidad remota? Busca notas 🐙 que enlacen a
+ * my/opportunity/<destId> en cualquier lead. Devuelve el res_id del lead que
+ * la reclama, o null (también si la comprobación falla: vincular no destruye).
+ */
+async function octupusFindClaimant(destId) {
   try {
     const msgs = await octupusCallKw('mail.message', 'search_read', [], {
       domain: [
         ['model', '=', 'crm.lead'],
-        ['res_id', '=', leadId],
-        ['body', 'like', 'Octupus Lead Sync'],
+        ['body', 'like', `my/opportunity/${destId}`],
       ],
-      fields: ['body'],
+      fields: ['res_id', 'body'],
       order: 'id desc',
-      limit: 5,
+      limit: 10,
     });
-    for (const msg of msgs || []) {
-      const m = String(msg.body || '').match(/my\/opportunity\/(\d+)/);
-      if (m) return parseInt(m[1], 10);
+    for (const m of msgs || []) {
+      // 'like' es substring: verificar coincidencia exacta del id
+      const match = String(m.body || '').match(/my\/opportunity\/(\d+)/);
+      if (match && parseInt(match[1], 10) === destId) return m.res_id;
     }
-    return msgs && msgs.length ? 0 : null;
+    return null;
   } catch (e) {
-    console.warn('[Octupus Lead Sync] No se pudo leer el chatter del lead', leadId, e);
     return null;
   }
 }
 
+const octupusActionModelCache = new Map();
+
 /** Devuelve el id del crm.lead abierto en la URL actual, o null. */
-function octupusCurrentLeadId() {
+async function octupusCurrentLeadId() {
   // Odoo <=16: /web#id=123&model=crm.lead&view_type=form...
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
   if (hashParams.get('model') === 'crm.lead') {
@@ -132,57 +213,126 @@ function octupusCurrentLeadId() {
     if (Number.isInteger(id)) return id;
   }
   // Odoo 17+: /odoo/crm/123
-  const m = window.location.pathname.match(/\/odoo\/crm(?:\.lead)?\/(\d+)(?:\/|$)/);
+  let m = window.location.pathname.match(/\/odoo\/crm(?:\.lead)?\/(\d+)(?:\/|$)/);
   if (m) return parseInt(m[1], 10);
+  // Odoo 17+ desde otros menús o smart buttons: /odoo/action-123/456
+  m = window.location.pathname.match(/\/odoo\/(?:[^/]+\/)*action-(\d+)\/(\d+)(?:\/|$)/);
+  if (m) {
+    const actionId = parseInt(m[1], 10);
+    const recordId = parseInt(m[2], 10);
+    let model = octupusActionModelCache.get(actionId);
+    if (model === undefined) {
+      try {
+        const action = await octupusJsonRpc('/web/action/load', { action_id: actionId });
+        model = (action && action.res_model) || null;
+      } catch (e) {
+        model = null;
+      }
+      octupusActionModelCache.set(actionId, model);
+    }
+    if (model === 'crm.lead') return recordId;
+  }
   return null;
 }
 
-/** Lee los leads, los envía al service worker y deja nota con el id remoto. */
-async function octupusSyncIds(ids, { manual = false } = {}) {
-  const leads = await octupusReadLeads(ids, { onlyOpportunities: !manual });
+/**
+ * Orquestador del envío:
+ *  1. Chatter del lead (fuente de verdad): con nota → no se reenvía. Si el
+ *     chatter no se puede leer, se ABORTA (nunca crear "a ciegas").
+ *  2. Búsqueda por título en el portal: si existe y ningún otro lead la
+ *     reclama → vincular sin duplicar. Si la reclama otro lead, es otro
+ *     negocio con el mismo título → se crea una nueva.
+ *  3. El service worker crea la oportunidad y rellena el contacto.
+ *  4. Nota 🐙 (solo con ID remoto real) + sincronización de comentarios.
+ */
+async function octupusSyncIds(ids) {
+  const leads = await octupusReadLeads(ids);
   if (!leads.length) {
     return { ok: false, error: 'No se pudo leer el lead (¿existe todavía?)', created: [], already: [] };
   }
 
-  // El chatter manda: si el lead ya tiene nota de sincronización, no se reenvía
+  // 1. El chatter manda
   const already = [];
-  const pending = [];
+  const toProcess = [];
   for (const lead of leads) {
-    const remoteId = await octupusFindRemoteId(lead.id);
-    if (remoteId !== null) already.push({ srcId: lead.id, destId: remoteId || null });
-    else pending.push(lead);
-  }
-  if (!pending.length) return { ok: true, created: [], already };
-
-  const result = await chrome.runtime.sendMessage({
-    type: 'SYNC_LEADS',
-    origin: window.location.origin,
-    leads: pending,
-    manual,
-  });
-  if (result && result.ok) {
-    // Notas: para los recién creados/vinculados y también para los que el
-    // service worker tenía en su registro local pero SIN nota en el chatter
-    // (bridge solo le envía leads sin nota) — así se restauran notas perdidas.
-    const paraNota = [
-      ...(result.created || []),
-      ...(result.already || []).map((a) => ({ ...a, existing: true })),
-    ];
-    if (paraNota.length) await octupusPostNotes(paraNota, result.portalUrl);
-
-    if (Array.isArray(result.created) && result.created.length) {
-      let commentsPosted = 0;
-      const byId = Object.fromEntries(pending.map((l) => [l.id, l]));
-      for (const item of result.created) {
-        const lead = byId[item.srcId];
-        const cr = await octupusSyncComments(item.srcId, item.destId, lead ? lead.name : '');
-        commentsPosted += (cr && cr.posted) || 0;
-      }
-      result.commentsPosted = commentsPosted;
+    let remoteId;
+    try {
+      remoteId = await octupusFindRemoteId(lead.id);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `No se pudo leer el chatter del lead #${lead.id} (${(err && err.message) || err}). Envío cancelado para evitar duplicados.`,
+        created: [],
+        already: [],
+      };
     }
-    result.already = [...(result.already || []), ...already];
+    if (remoteId !== null) already.push({ srcId: lead.id, destId: remoteId || null });
+    else toProcess.push(lead);
   }
-  return result;
+  if (!toProcess.length) return { ok: true, created: [], already };
+
+  // 2. Vincular contra el portal si procede
+  const created = [];
+  const toCreate = [];
+  let portalUrl = null;
+  for (const lead of toProcess) {
+    const found = await chrome.runtime.sendMessage({ type: 'FIND_REMOTE', title: lead.name });
+    if (found && found.portalUrl) portalUrl = found.portalUrl;
+    const candidateId = found && found.ok ? found.destId : null;
+    if (candidateId) {
+      const claimant = await octupusFindClaimant(candidateId);
+      if (!claimant || claimant === lead.id) {
+        await chrome.runtime.sendMessage({
+          type: 'MARK_LINKED',
+          origin: window.location.origin,
+          leadId: lead.id,
+          destId: candidateId,
+          name: lead.name,
+        });
+        created.push({ srcId: lead.id, destId: candidateId, existing: true });
+        continue;
+      }
+      // Reclamada por otro lead → mismo título, negocio distinto: crear nueva
+    }
+    toCreate.push(lead);
+  }
+
+  // 3. Crear las restantes
+  let alreadyBg = [];
+  let errorBg = null;
+  if (toCreate.length) {
+    const r = await chrome.runtime.sendMessage({
+      type: 'SYNC_LEADS',
+      origin: window.location.origin,
+      leads: toCreate,
+    });
+    if (r && r.ok) {
+      created.push(...(r.created || []));
+      // Solo restaurar notas de entradas locales con ID remoto real
+      alreadyBg = (r.already || []).filter((a) => a.destId);
+      portalUrl = r.portalUrl || portalUrl;
+    } else {
+      errorBg = (r && r.error) || 'Error en el envío';
+    }
+  }
+
+  // 4. Notas (nunca sin ID remoto) y comentarios
+  const paraNota = [...created, ...alreadyBg.map((a) => ({ ...a, existing: true }))].filter((i) => i.destId);
+  if (paraNota.length) await octupusPostNotes(paraNota, portalUrl);
+
+  let commentsPosted = 0;
+  const byId = Object.fromEntries(leads.map((l) => [l.id, l]));
+  for (const item of created) {
+    if (!item.destId) continue;
+    const lead = byId[item.srcId];
+    const cr = await octupusSyncComments(item.srcId, item.destId, lead ? lead.name : '');
+    commentsPosted += (cr && cr.posted) || 0;
+  }
+
+  if (errorBg && !created.length) {
+    return { ok: false, error: errorBg, created, already: [...already, ...alreadyBg] };
+  }
+  return { ok: true, created, already: [...already, ...alreadyBg], commentsPosted };
 }
 
 /** JSON-RPC same-origin con la sesión del usuario, a cualquier ruta. */
@@ -210,14 +360,13 @@ function octupusCallKw(model, method, args, kwargs) {
   });
 }
 
-async function octupusReadLeads(ids, { onlyOpportunities = true } = {}) {
+async function octupusReadLeads(ids) {
   // search_read en lugar de read: tolera leads eliminados por fusión (merge)
   const result = await octupusCallKw('crm.lead', 'search_read', [], {
     domain: [['id', 'in', ids]],
     fields: OCTUPUS_LEAD_FIELDS,
   });
-  const leads = (result || []).filter((lead) => !onlyOpportunities || lead.type === 'opportunity');
-  return octupusEnrichLeads(leads);
+  return octupusEnrichLeads(result || []);
 }
 
 /**
@@ -253,23 +402,23 @@ async function octupusEnrichLeads(leads) {
   return leads;
 }
 
-/** Deja una nota interna en el chatter de cada lead de origen con el id remoto. */
+/**
+ * Deja una nota interna en el chatter de cada lead de origen con el id remoto.
+ * NUNCA publica notas sin ID: una nota sin URL "envenena" la detección
+ * (el lead quedaría como sincronizado sin poder actualizarse).
+ */
 async function octupusPostNotes(created, portalUrl) {
   const base = (portalUrl || 'https://www.odoo.com').replace(/\/+$/, '');
   for (const item of created) {
-    if (!item || !item.srcId) continue;
+    if (!item || !item.srcId || !item.destId) continue;
     const accion = item.existing
       ? 'ya existía en el portal de partners de odoo.com; vinculado sin duplicar'
       : 'enviado al portal de partners de odoo.com';
-    const remoteUrl = item.destId ? `${base}/my/opportunity/${item.destId}` : null;
-    const bodyHtml = remoteUrl
-      ? `🐙 <b>Octupus Lead Sync</b>: ${accion}.<br/>` +
-        `ID remoto: <b>${item.destId}</b> — <a href="${remoteUrl}" target="_blank">ver en el portal</a>`
-      : `🐙 <b>Octupus Lead Sync</b>: ${accion}.<br/>` +
-        `ID remoto no disponible en la respuesta del portal`;
-    const bodyText = remoteUrl
-      ? `🐙 Octupus Lead Sync: ${accion}. ID remoto: ${item.destId} — ${remoteUrl}`
-      : `🐙 Octupus Lead Sync: ${accion} (ID remoto no disponible).`;
+    const remoteUrl = `${base}/my/opportunity/${item.destId}`;
+    const bodyHtml =
+      `🐙 <b>Octupus Lead Sync</b>: ${accion}.<br/>` +
+      `ID remoto: <b>${item.destId}</b> — <a href="${remoteUrl}" target="_blank">ver en el portal</a>`;
+    const bodyText = `🐙 Octupus Lead Sync: ${accion}. ID remoto: ${item.destId} — ${remoteUrl}`;
     try {
       await octupusPostNote(item.srcId, bodyHtml, bodyText);
     } catch (err) {
@@ -536,6 +685,18 @@ function octupusRenderWidget(leadId, remoteId, loading) {
     main.style.color = '#fff';
     main.onclick = null;
     update.style.display = 'none';
+  } else if (remoteId === 'error') {
+    // No se pudo leer el chatter: NUNCA ofrecer "Enviar" (riesgo de duplicado)
+    main.textContent = '🐙 Estado desconocido · reintentar';
+    main.style.background = '#6b7280';
+    main.style.color = '#fff';
+    main.disabled = false;
+    main.onclick = () => {
+      octupusRemoteCache.delete(leadId);
+      octupusRenderWidget(leadId, null, true);
+      octupusUiRefresh(leadId);
+    };
+    update.style.display = 'none';
   } else if (remoteId) {
     main.textContent = `🐙 Sincronizado · #${remoteId}`;
     main.style.background = '#2e7d32';
@@ -553,7 +714,9 @@ function octupusRenderWidget(leadId, remoteId, loading) {
     main.style.background = '#b26a00';
     main.style.color = '#fff';
     main.onclick = null;
-    update.style.display = 'none';
+    update.textContent = '🔁 Re-vincular con el portal';
+    update.style.display = 'flex';
+    update.onclick = () => octupusUiRelink(leadId);
   } else {
     main.textContent = '🐙 Enviar a odoo.com';
     main.style.background = '#714b67';
@@ -569,7 +732,7 @@ async function octupusUiSend(leadId) {
   octupusRenderWidget(leadId, null, true);
   octupusToast('Enviando lead a odoo.com…', 0);
   try {
-    const r = await octupusSyncIds([leadId], { manual: true });
+    const r = await octupusSyncIds([leadId]);
     if (r && r.ok && Array.isArray(r.created) && r.created.length) {
       const d = r.created[0];
       const extra = r.commentsPosted ? ` · ${r.commentsPosted} comentario(s)` : '';
@@ -616,26 +779,60 @@ async function octupusUiRefresh(leadId) {
   if (octupusRemoteCache.has(leadId)) {
     remoteId = octupusRemoteCache.get(leadId);
   } else {
-    remoteId = await octupusFindRemoteId(leadId);
-    octupusRemoteCache.set(leadId, remoteId);
+    try {
+      remoteId = await octupusFindRemoteId(leadId);
+      octupusRemoteCache.set(leadId, remoteId);
+    } catch (e) {
+      remoteId = 'error'; // no se cachea: el siguiente intento vuelve a leer
+    }
   }
   if (octupusUiLeadId === leadId) octupusRenderWidget(leadId, remoteId, false);
+}
+
+/** Re-vincula desde el widget un lead cuya nota no tiene ID remoto. */
+async function octupusUiRelink(leadId) {
+  if (octupusUiBusy) return;
+  octupusUiBusy = true;
+  octupusRenderWidget(leadId, 0, true);
+  octupusToast('Buscando la oportunidad en el portal…', 0);
+  try {
+    const r = await octupusRelinkLead(leadId);
+    if (r && r.ok) {
+      octupusToast(`✔ Re-vinculado — ID remoto ${r.destId}`);
+    } else {
+      octupusToast(`✖ ${(r && r.error) || 'No se pudo re-vincular'}`, 10000);
+    }
+  } catch (err) {
+    octupusToast(`✖ ${(err && err.message) || err}`, 10000);
+  }
+  octupusUiBusy = false;
+  octupusRemoteCache.delete(leadId);
+  await octupusUiRefresh(leadId);
 }
 
 /**
  * El cliente web de Odoo es una SPA (cambia de registro sin recargar), así
  * que se sondea la URL cada segundo y se refresca el widget al cambiar de lead.
  */
+let octupusTickRunning = false;
 async function octupusUiTick() {
-  const leadId = octupusCurrentLeadId();
-  if (leadId === octupusUiLeadId) return;
-  octupusUiLeadId = leadId;
-  if (!leadId) {
-    if (octupusUi) octupusUi.wrap.style.display = 'none';
-    return;
+  if (octupusTickRunning) return;
+  octupusTickRunning = true;
+  try {
+    const leadId = await octupusCurrentLeadId();
+    if (leadId !== octupusUiLeadId) {
+      octupusUiLeadId = leadId;
+      if (!leadId) {
+        if (octupusUi) octupusUi.wrap.style.display = 'none';
+      } else {
+        octupusRenderWidget(leadId, null, true);
+        await octupusUiRefresh(leadId);
+      }
+    }
+  } catch (e) {
+    /* siguiente tick */
   }
-  octupusRenderWidget(leadId, null, true);
-  await octupusUiRefresh(leadId);
+  octupusTickRunning = false;
 }
 
 setInterval(octupusUiTick, 1000);

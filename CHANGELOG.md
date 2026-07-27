@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.2.0 — 2026-07-27
+
+Endurecimiento de la lógica tras auditoría completa.
+
+### Corregido
+- "No hay nota" y "no se pudo leer el chatter" ya no se confunden: ante un
+  error de lectura, el widget muestra "Estado desconocido · reintentar" y el
+  envío se cancela (antes podía ofrecer "Enviar" en un lead ya sincronizado
+  y provocar duplicados).
+- Ya no se publican notas 🐙 sin ID remoto (envenenaban la detección dejando
+  el lead en un estado sin salida).
+- "Actualizar datos" ya no borra campos remotos: solo se envían los campos
+  con valor en el origen.
+- Registro local: las entradas sin ID remoto se reintentan en vez de quedar
+  bloqueadas; corregido un bug que descartaba el ID recién confirmado al
+  actualizar; corregido el mensaje de error engañoso cuando falla la API de
+  cookies.
+
+### Añadido
+- **Re-vincular** (widget y popup): vía de escape para leads con nota sin ID
+  o con la oportunidad remota borrada — re-busca por título en el portal y
+  reescribe la nota. Nunca crea nada.
+- **Comprobación de reclamante** antes de vincular por título: si otro lead
+  ya reclama esa oportunidad (nota 🐙 con su ID), se crea una nueva en lugar
+  de mezclar dos negocios con el mismo título.
+- **Auto-curación del ID**: si `create_opp_portal` no devuelve el ID, se
+  recupera buscando la oportunidad recién creada en el portal.
+- Detección del lead en rutas `/odoo/action-<id>/<record>` (leads abiertos
+  desde smart buttons u otros menús en Odoo 17+), resolviendo el modelo de
+  la acción vía `/web/action/load`.
+
+### Cambiado
+- La orquestación del envío pasa al content script (bridge), que es quien
+  puede consultar el chatter de origen; el service worker queda como capa de
+  operaciones contra el portal (`FIND_REMOTE`, `MARK_LINKED`, crear,
+  contacto, comentarios).
+
 ## 1.1.0 — 2026-07-27
 
 ### Añadido

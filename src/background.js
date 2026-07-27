@@ -37,6 +37,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, posted: 0, error: errMsg(err) }));
     return true;
   }
+  if (msg && msg.type === 'FIND_REMOTE') {
+    (async () => {
+      const cfg = await getConfig();
+      const destId = await findRemotePortalOpportunity(cfg, msg.title);
+      return { ok: true, destId, portalUrl: cfg.portalUrl };
+    })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
+    return true;
+  }
+  if (msg && msg.type === 'MARK_LINKED') {
+    (async () => {
+      const cfg = await getConfig();
+      const { sent = {} } = await chrome.storage.local.get('sent');
+      const key = `${msg.origin}#${msg.leadId}`;
+      const prev = sent[key] || {};
+      sent[key] = { ...prev, destId: msg.destId, at: prev.at || new Date().toISOString() };
+      await chrome.storage.local.set({ sent });
+      await addLog({
+        ok: true,
+        name: msg.name || `lead #${msg.leadId}`,
+        srcId: msg.leadId,
+        destId: msg.destId,
+        origin: msg.origin,
+        action: 'link',
+      });
+      return { ok: true, portalUrl: cfg.portalUrl };
+    })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
+    return true;
+  }
   if (msg && msg.type === 'LOG') {
     addLog(msg.entry || {})
       .then(() => sendResponse({ ok: true }))
@@ -96,12 +128,14 @@ async function checkSession(cfgOverride) {
   const cfg = cfgOverride ? { ...DEFAULTS, ...cfgOverride } : await getConfig();
 
   let cookie = null;
+  let cookieChecked = false;
   try {
     cookie = await chrome.cookies.get({ url: cfg.portalUrl, name: 'session_id' });
+    cookieChecked = true;
   } catch (e) {
-    /* sin acceso a cookies para ese host: lo detectará get_session_info */
+    /* sin acceso a la API de cookies para ese host: lo verificará get_session_info */
   }
-  if (cookie === null) {
+  if (cookieChecked && cookie === null) {
     throw new Error(`No hay cookie de sesión para ${cfg.portalUrl}. Inicia sesión en esa web con este perfil de Chrome.`);
   }
 
@@ -206,17 +240,24 @@ async function updateContactDetails(cfg, destId, lead) {
   if (!destId) throw new Error('ID remoto desconocido');
   const countryId = await resolveDestCountryId(cfg, lead.country_code);
   const stateId = await resolveDestStateId(cfg, countryId, lead.state_code, lead.state_name);
-  const values = {
-    partner_name: lead.partner_name || lead.contact_name || '',
-    phone: lead.phone || lead.mobile || '',
-    email_from: lead.email_from || '',
-    street: lead.street || '',
-    street2: lead.street2 || '',
-    city: lead.city || '',
-    zip: lead.zip || '',
-    state_id: stateId || null,
-    country_id: countryId || null,
+  // Solo campos con valor: lo que el origen no tiene NO debe borrar lo que
+  // alguien haya completado a mano en el portal
+  const candidatos = {
+    partner_name: lead.partner_name || lead.contact_name,
+    phone: lead.phone || lead.mobile,
+    email_from: lead.email_from,
+    street: lead.street,
+    street2: lead.street2,
+    city: lead.city,
+    zip: lead.zip,
+    state_id: stateId,
+    country_id: countryId,
   };
+  const values = {};
+  for (const [campo, valor] of Object.entries(candidatos)) {
+    if (valor) values[campo] = valor;
+  }
+  if (!Object.keys(values).length) return;
   await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/update_contact_details_from_portal', {
     model: 'crm.lead',
     method: 'update_contact_details_from_portal',
@@ -231,7 +272,8 @@ async function updateLead(origin, lead, destId) {
   await checkSession();
   await updateContactDetails(cfg, destId, lead);
   const { sent = {} } = await chrome.storage.local.get('sent');
-  sent[`${origin}#${lead.id}`] = { destId, at: new Date().toISOString(), ...(sent[`${origin}#${lead.id}`] || {}) };
+  const prev = sent[`${origin}#${lead.id}`] || {};
+  sent[`${origin}#${lead.id}`] = { ...prev, destId, at: prev.at || new Date().toISOString() };
   await chrome.storage.local.set({ sent });
   await addLog({ ok: true, name: lead.name, srcId: lead.id, destId, origin, action: 'update' });
   return { ok: true, destId };
@@ -311,11 +353,14 @@ async function createOppPortal(cfg, lead, origin) {
 async function syncLeads(origin, leads) {
   const cfg = await getConfig();
 
+  // Registro local: solo cuenta como "ya enviado" si tiene ID remoto real.
+  // Las entradas con destId nulo se reintentan (la búsqueda por título del
+  // bridge y la auto-curación de abajo evitan duplicar).
   const { sent = {} } = await chrome.storage.local.get('sent');
   const already = leads
-    .filter((l) => sent[`${origin}#${l.id}`])
+    .filter((l) => sent[`${origin}#${l.id}`] && sent[`${origin}#${l.id}`].destId)
     .map((l) => ({ srcId: l.id, destId: sent[`${origin}#${l.id}`].destId }));
-  const pending = leads.filter((l) => !sent[`${origin}#${l.id}`]);
+  const pending = leads.filter((l) => !(sent[`${origin}#${l.id}`] && sent[`${origin}#${l.id}`].destId));
   if (!pending.length) return { ok: true, created: [], already, portalUrl: cfg.portalUrl };
 
   try {
@@ -328,26 +373,20 @@ async function syncLeads(origin, leads) {
   const created = [];
   for (const lead of pending) {
     try {
-      // Ya existe en el portal (mismo título) → vincular sin duplicar y sin
-      // tocar los datos de contacto remotos; la nota la pone bridge.js
-      const existingId = await findRemotePortalOpportunity(cfg, lead.name);
-      if (existingId) {
-        sent[`${origin}#${lead.id}`] = { destId: existingId, at: new Date().toISOString() };
-        created.push({ srcId: lead.id, destId: existingId, existing: true });
-        await addLog({ ok: true, name: lead.name, srcId: lead.id, destId: existingId, origin, action: 'link' });
-        continue;
-      }
-
-      const destId = await createOppPortal(cfg, lead, origin);
+      let destId = await createOppPortal(cfg, lead, origin);
       let warn = null;
+      if (!destId) {
+        // Auto-curación: la respuesta no traía el ID, pero la oportunidad
+        // recién creada debe aparecer en el portal con este título
+        destId = await findRemotePortalOpportunity(cfg, lead.name);
+        if (!destId) warn = 'El portal no devolvió el ID remoto: usa Re-vincular más tarde';
+      }
       if (destId) {
         try {
           await updateContactDetails(cfg, destId, lead);
         } catch (err) {
           warn = `Contacto no actualizado: ${errMsg(err)}`;
         }
-      } else {
-        warn = 'ID remoto no disponible: contacto no actualizado';
       }
       sent[`${origin}#${lead.id}`] = { destId, at: new Date().toISOString() };
       created.push({ srcId: lead.id, destId });

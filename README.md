@@ -56,10 +56,22 @@ cuándo.
      `search_read` de `crm.lead`, así que se busca en el HTML de
      `/my/opportunities?search=<título>` y se compara el slug del enlace
      (`/my/opportunity/<slug>-<id>`) con el slug del título del lead. Si
-     coincide exactamente, se **vincula** la oportunidad existente (se
-     guarda su ID y se añade la nota al chatter) sin crear duplicado y sin
-     tocar los datos de contacto remotos.
+     coincide exactamente **y ningún otro lead reclama ya ese ID** (se
+     comprueba en las notas 🐙 del origen), se **vincula** la oportunidad
+     existente sin crear duplicado y sin tocar los datos remotos. Si otro
+     lead la reclama, se asume que es un negocio distinto con el mismo
+     título y se crea una nueva.
    - **Almacenamiento local** de la extensión, como última capa.
+
+   Seguridad ante fallos: si el chatter del lead no se puede leer, el envío
+   se **cancela** (el widget muestra "Estado desconocido · reintentar") —
+   nunca se crea "a ciegas". Y si el portal no devuelve el ID al crear, se
+   recupera buscando la oportunidad recién creada por título.
+
+7. **Re-vincular** (vía de escape): si una nota quedó sin ID remoto o la
+   oportunidad se borró en el portal, el botón "🔁 Re-vincular" (widget y
+   popup) re-busca por título y reescribe la nota con el ID. Nunca crea nada
+   nuevo; si no encuentra la oportunidad, indica cómo proceder.
 
 ## Requisito único
 

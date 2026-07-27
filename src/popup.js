@@ -96,21 +96,32 @@ async function initManual() {
   }
   if (!res || !res.leadId) return;
 
-  renderManual(tab.id, res.leadId, res.remoteId);
+  renderManual(tab.id, res.leadId, res.remoteId, res.readError);
 }
 
-function renderManual(tabId, leadId, remoteId) {
+function renderManual(tabId, leadId, remoteId, readError) {
   $('manual').hidden = false;
   const btn = $('sendLead');
 
-  if (remoteId === 0) {
-    // Hay nota en el chatter pero sin id parseable: sincronizado, sin acciones
+  if (readError) {
+    // No se pudo leer el chatter: nunca ofrecer "Enviar" (riesgo de duplicado)
     btn.hidden = true;
-    setManualStatus(`Lead #${leadId} ya sincronizado (nota en el chatter sin ID remoto)`, true);
+    setManualStatus(
+      `No se pudo comprobar el estado del lead #${leadId}. Revisa tu sesión de Odoo y vuelve a abrir el popup.`,
+      false
+    );
     return;
   }
 
   btn.hidden = false;
+  if (remoteId === 0) {
+    // Hay nota en el chatter pero sin id parseable: ofrecer re-vinculación
+    btn.textContent = `Re-vincular lead #${leadId} con el portal`;
+    setManualStatus('Sincronizado, pero la nota del chatter no tiene ID remoto', false);
+    btn.onclick = () => runManualAction(tabId, leadId, 'RELINK_CURRENT_LEAD', null);
+    return;
+  }
+
   if (remoteId) {
     btn.textContent = `Actualizar datos del lead #${leadId} en odoo.com`;
     setManualStatus(`Ya sincronizado — ID remoto ${remoteId}`, true);
@@ -125,11 +136,20 @@ function renderManual(tabId, leadId, remoteId) {
 async function runManualAction(tabId, leadId, type, remoteId) {
   const btn = $('sendLead');
   btn.disabled = true;
-  setManualStatus(type === 'SEND_CURRENT_LEAD' ? 'Enviando…' : 'Actualizando…');
+  setManualStatus(
+    type === 'SEND_CURRENT_LEAD' ? 'Enviando…' : type === 'RELINK_CURRENT_LEAD' ? 'Re-vinculando…' : 'Actualizando…'
+  );
   try {
     const r = await chrome.tabs.sendMessage(tabId, { type });
     const comentarios = r && r.commentsPosted ? ` · ${r.commentsPosted} comentario(s) enviados` : '';
-    if (type === 'UPDATE_CURRENT_LEAD') {
+    if (type === 'RELINK_CURRENT_LEAD') {
+      if (r && r.ok) {
+        renderManual(tabId, leadId, r.destId);
+        setManualStatus(`✔ Re-vinculado — ID remoto ${r.destId}`, true);
+      } else {
+        setManualStatus(`✖ ${(r && r.error) || 'No se pudo re-vincular'}`, false);
+      }
+    } else if (type === 'UPDATE_CURRENT_LEAD') {
       if (r && r.ok) {
         setManualStatus(`✔ Datos actualizados en odoo.com (ID remoto ${r.destId || remoteId})${comentarios}`, true);
       } else {

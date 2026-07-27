@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.3 — 2026-07-27
+
+### Cambiado
+- **Iconografía de botones** más clara: ⬆️/⬇️ para subir/bajar mensajes
+  (convención upload/download), 📇 para actualizar el contacto, 🔗 para
+  re-vincular, ⚠️ para el estado de error, y "↗" en la píldora verde para
+  indicar que abre la oportunidad en el portal. Destino explícito en los
+  textos ("a odoo.com" / "de odoo.com") y tooltips en todos los botones.
+
 ## 1.4.2 — 2026-07-27
 
 ### Corregido

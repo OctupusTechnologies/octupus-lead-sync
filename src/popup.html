@@ -78,8 +78,14 @@
   <div id="session" class="session">Comprobando sesión de odoo.com…</div>
   <div id="manual" class="manual" hidden>
     <button id="sendLead" class="send"></button>
-    <button id="pushMsgs" class="send secondary" hidden>📤 Enviar mensajes a odoo.com</button>
-    <button id="pullMsgs" class="send secondary" hidden>📥 Traer mensajes de odoo.com</button>
+    <button id="pushMsgs" class="send secondary" hidden
+      title="Publica en el portal los mensajes nuevos del chatter de este lead">
+      ⬆️ Enviar mensajes a odoo.com
+    </button>
+    <button id="pullMsgs" class="send secondary" hidden
+      title="Importa como notas internas los mensajes escritos en el portal">
+      ⬇️ Traer mensajes de odoo.com
+    </button>
     <div id="manualStatus" class="manual-status"></div>
   </div>
   <div><strong>Últimos envíos</strong></div>

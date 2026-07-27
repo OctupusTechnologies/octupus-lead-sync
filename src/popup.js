@@ -122,14 +122,16 @@ function renderManual(tabId, leadId, remoteId, readError) {
   btn.hidden = false;
   if (remoteId === 0) {
     // Hay nota en el chatter pero sin id parseable: ofrecer re-vinculación
-    btn.textContent = `Re-vincular lead #${leadId} con el portal`;
+    btn.textContent = `🔗 Re-vincular lead #${leadId} con el portal`;
+    btn.title = 'Busca la oportunidad en el portal y reescribe la nota con su ID. No crea nada.';
     setManualStatus('Sincronizado, pero la nota del chatter no tiene ID remoto', false);
     btn.onclick = () => runManualAction(tabId, leadId, 'RELINK_CURRENT_LEAD', null);
     return;
   }
 
   if (remoteId) {
-    btn.textContent = `↻ Actualizar datos del lead #${leadId}`;
+    btn.textContent = `📇 Actualizar contacto del lead #${leadId}`;
+    btn.title = 'Vuelve a enviar los datos de contacto del lead a la oportunidad del portal';
     setManualStatus(`Ya sincronizado — ID remoto ${remoteId}`, true);
     btn.onclick = () => runManualAction(tabId, leadId, 'UPDATE_CURRENT_LEAD', remoteId);
     push.hidden = false;
@@ -137,7 +139,8 @@ function renderManual(tabId, leadId, remoteId, readError) {
     pull.hidden = false;
     pull.onclick = () => runManualAction(tabId, leadId, 'PULL_CURRENT_COMMENTS', remoteId);
   } else {
-    btn.textContent = `Enviar lead #${leadId} a odoo.com`;
+    btn.textContent = `🐙 Enviar lead #${leadId} a odoo.com`;
+    btn.title = 'Crea la oportunidad en el portal, rellena el contacto, deja nota y sube los mensajes';
     setManualStatus('');
     btn.onclick = () => runManualAction(tabId, leadId, 'SEND_CURRENT_LEAD', null);
   }

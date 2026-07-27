@@ -824,7 +824,8 @@ function octupusRenderWidget(leadId, remoteId, loading) {
     ocultarSecundarios();
   } else if (remoteId === 'error') {
     // No se pudo leer el chatter: NUNCA ofrecer "Enviar" (riesgo de duplicado)
-    main.textContent = '🐙 Estado desconocido · reintentar';
+    main.textContent = '⚠️ Estado desconocido · reintentar';
+    main.title = 'No se pudo leer el chatter del lead. Clic para volver a comprobar.';
     main.style.background = '#6b7280';
     main.style.color = '#fff';
     main.disabled = false;
@@ -835,7 +836,8 @@ function octupusRenderWidget(leadId, remoteId, loading) {
     };
     ocultarSecundarios();
   } else if (remoteId) {
-    main.textContent = `🐙 Sincronizado · #${remoteId}`;
+    main.textContent = `🐙 Sincronizado · #${remoteId} ↗`;
+    main.title = 'Abrir la oportunidad en el portal de odoo.com';
     main.style.background = '#2e7d32';
     main.style.color = '#fff';
     main.onclick = async () => {
@@ -843,26 +845,32 @@ function octupusRenderWidget(leadId, remoteId, loading) {
       const base = (config.portalUrl || 'https://www.odoo.com').replace(/\/+$/, '');
       window.open(`${base}/my/opportunity/${remoteId}`, '_blank');
     };
-    btnData.textContent = '↻ Actualizar datos';
+    btnData.textContent = '📇 Actualizar contacto en odoo.com';
+    btnData.title = 'Vuelve a enviar los datos de contacto del lead (nombre, email, teléfono, dirección) a la oportunidad del portal';
     btnData.style.display = 'flex';
     btnData.onclick = () => octupusUiAction(leadId, remoteId, 'data');
-    btnPush.textContent = '📤 Enviar mensajes';
+    btnPush.textContent = '⬆️ Enviar mensajes a odoo.com';
+    btnPush.title = 'Publica en el portal los mensajes nuevos del chatter de este lead';
     btnPush.style.display = 'flex';
     btnPush.onclick = () => octupusUiAction(leadId, remoteId, 'push');
-    btnPull.textContent = '📥 Traer mensajes';
+    btnPull.textContent = '⬇️ Traer mensajes de odoo.com';
+    btnPull.title = 'Importa como notas internas los mensajes escritos en el portal (Odoo, cliente…)';
     btnPull.style.display = 'flex';
     btnPull.onclick = () => octupusUiAction(leadId, remoteId, 'pull');
   } else if (remoteId === 0) {
-    main.textContent = '🐙 Sincronizado (ID desconocido)';
+    main.textContent = '🐙 Sincronizado (sin ID remoto)';
+    main.title = 'La nota del chatter no contiene el ID de la oportunidad del portal';
     main.style.background = '#b26a00';
     main.style.color = '#fff';
     main.onclick = null;
     ocultarSecundarios();
-    btnData.textContent = '🔁 Re-vincular con el portal';
+    btnData.textContent = '🔗 Re-vincular con el portal';
+    btnData.title = 'Busca la oportunidad en el portal (por título y email) y reescribe la nota con su ID. No crea nada.';
     btnData.style.display = 'flex';
     btnData.onclick = () => octupusUiRelink(leadId);
   } else {
-    main.textContent = '🐙 Enviar a odoo.com';
+    main.textContent = '🐙 Enviar lead a odoo.com';
+    main.title = 'Crea la oportunidad en el portal de partners, rellena el contacto, deja nota de trazabilidad y sube los mensajes';
     main.style.background = '#714b67';
     main.style.color = '#fff';
     main.onclick = () => octupusUiSend(leadId);

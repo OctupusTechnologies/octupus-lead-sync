@@ -40,8 +40,10 @@ async function render() {
         : entry.action === 'link'
           ? `✔ vinculado #${entry.destId || '?'} (ya existía)`
           : entry.action === 'comments'
-            ? `✔ ${entry.count || '?'} comentario(s) → #${entry.destId || '?'}`
-            : `✔ creado #${entry.destId || '?'}`;
+            ? `✔ ${entry.count || '?'} mensaje(s) → #${entry.destId || '?'}`
+            : entry.action === 'pull'
+              ? `✔ ${entry.count || '?'} mensaje(s) traídos de #${entry.destId || '?'}`
+              : `✔ creado #${entry.destId || '?'}`;
     status.textContent = entry.ok ? okText : `✖ ${entry.error || 'error'}`;
     meta.append(`${fmtDate(entry.at)} · `, status);
     if (entry.ok && entry.warn) meta.append(` · ⚠ ${entry.warn}`);
@@ -102,6 +104,10 @@ async function initManual() {
 function renderManual(tabId, leadId, remoteId, readError) {
   $('manual').hidden = false;
   const btn = $('sendLead');
+  const push = $('pushMsgs');
+  const pull = $('pullMsgs');
+  push.hidden = true;
+  pull.hidden = true;
 
   if (readError) {
     // No se pudo leer el chatter: nunca ofrecer "Enviar" (riesgo de duplicado)
@@ -123,9 +129,13 @@ function renderManual(tabId, leadId, remoteId, readError) {
   }
 
   if (remoteId) {
-    btn.textContent = `Actualizar datos del lead #${leadId} en odoo.com`;
+    btn.textContent = `↻ Actualizar datos del lead #${leadId}`;
     setManualStatus(`Ya sincronizado — ID remoto ${remoteId}`, true);
     btn.onclick = () => runManualAction(tabId, leadId, 'UPDATE_CURRENT_LEAD', remoteId);
+    push.hidden = false;
+    push.onclick = () => runManualAction(tabId, leadId, 'PUSH_CURRENT_COMMENTS', remoteId);
+    pull.hidden = false;
+    pull.onclick = () => runManualAction(tabId, leadId, 'PULL_CURRENT_COMMENTS', remoteId);
   } else {
     btn.textContent = `Enviar lead #${leadId} a odoo.com`;
     setManualStatus('');
@@ -135,10 +145,16 @@ function renderManual(tabId, leadId, remoteId, readError) {
 
 async function runManualAction(tabId, leadId, type, remoteId) {
   const btn = $('sendLead');
-  btn.disabled = true;
-  setManualStatus(
-    type === 'SEND_CURRENT_LEAD' ? 'Enviando…' : type === 'RELINK_CURRENT_LEAD' ? 'Re-vinculando…' : 'Actualizando…'
-  );
+  const botones = [btn, $('pushMsgs'), $('pullMsgs')];
+  botones.forEach((b) => (b.disabled = true));
+  const enCurso = {
+    SEND_CURRENT_LEAD: 'Enviando…',
+    RELINK_CURRENT_LEAD: 'Re-vinculando…',
+    UPDATE_CURRENT_LEAD: 'Actualizando datos…',
+    PUSH_CURRENT_COMMENTS: 'Enviando mensajes…',
+    PULL_CURRENT_COMMENTS: 'Trayendo mensajes…',
+  };
+  setManualStatus(enCurso[type] || 'Trabajando…');
   try {
     const r = await chrome.tabs.sendMessage(tabId, { type });
     const comentarios = r && r.commentsPosted ? ` · ${r.commentsPosted} comentario(s) enviados` : '';
@@ -151,9 +167,21 @@ async function runManualAction(tabId, leadId, type, remoteId) {
       }
     } else if (type === 'UPDATE_CURRENT_LEAD') {
       if (r && r.ok) {
-        setManualStatus(`✔ Datos actualizados en odoo.com (ID remoto ${r.destId || remoteId})${comentarios}`, true);
+        setManualStatus(`✔ Datos actualizados en odoo.com (ID remoto ${r.destId || remoteId})`, true);
       } else {
         setManualStatus(`✖ ${(r && r.error) || 'No se pudo actualizar'}`, false);
+      }
+    } else if (type === 'PUSH_CURRENT_COMMENTS') {
+      if (r && r.ok) {
+        setManualStatus(r.posted ? `✔ ${r.posted} mensaje(s) enviados al portal` : 'Nada nuevo que enviar', true);
+      } else {
+        setManualStatus(`✖ ${(r && r.error) || 'No se pudieron enviar los mensajes'}`, false);
+      }
+    } else if (type === 'PULL_CURRENT_COMMENTS') {
+      if (r && r.ok) {
+        setManualStatus(r.pulled ? `✔ ${r.pulled} mensaje(s) traídos como notas` : 'Nada nuevo que traer', true);
+      } else {
+        setManualStatus(`✖ ${(r && r.error) || 'No se pudieron traer los mensajes'}`, false);
       }
     } else if (r && r.ok && Array.isArray(r.created) && r.created.length) {
       const d = r.created[0];
@@ -174,7 +202,7 @@ async function runManualAction(tabId, leadId, type, remoteId) {
   } catch (err) {
     setManualStatus(`✖ ${err.message || err}`, false);
   }
-  btn.disabled = false;
+  botones.forEach((b) => (b.disabled = false));
   render(); // refrescar la lista de envíos
 }
 

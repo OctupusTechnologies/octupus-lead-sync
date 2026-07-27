@@ -58,6 +58,12 @@
       font-weight: 600;
     }
     button.send:disabled { opacity: .6; cursor: default; }
+    button.send.secondary {
+      background: #e8eaf0;
+      color: #1f2430;
+      font-weight: 500;
+      margin-top: .4rem;
+    }
     .manual-status { margin-top: .35rem; font-size: .78rem; min-height: 1em; }
     .manual-status.ok { color: #2e7d32; }
     .manual-status.error { color: #c62828; }
@@ -72,6 +78,8 @@
   <div id="session" class="session">Comprobando sesión de odoo.com…</div>
   <div id="manual" class="manual" hidden>
     <button id="sendLead" class="send"></button>
+    <button id="pushMsgs" class="send secondary" hidden>📤 Enviar mensajes a odoo.com</button>
+    <button id="pullMsgs" class="send secondary" hidden>📥 Traer mensajes de odoo.com</button>
     <div id="manualStatus" class="manual-status"></div>
   </div>
   <div><strong>Últimos envíos</strong></div>

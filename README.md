@@ -107,8 +107,15 @@ formulario). Abajo a la derecha aparece el widget:
 - **"🐙 Enviar a odoo.com"** (morado) → crea la oportunidad en el portal,
   rellena el contacto, deja la nota y sincroniza los comentarios.
 - **"🐙 Sincronizado · #ID"** (verde) → el lead ya está en el portal; clic
-  para abrir la oportunidad. Debajo, **"↻ Actualizar datos y comentarios"**
-  vuelve a empujar el contacto actual y los mensajes nuevos del chatter.
+  para abrir la oportunidad. Debajo, tres acciones separadas:
+  - **"↻ Actualizar datos"** — vuelve a empujar los datos de contacto
+    (solo los campos con valor).
+  - **"📤 Enviar mensajes"** — publica en el portal los mensajes nuevos del
+    chatter del lead.
+  - **"📥 Traer mensajes"** — importa como **notas internas** del lead los
+    mensajes escritos en el portal (p. ej. por tu account manager de Odoo),
+    con autor y fecha. Sin ecos: lo que empujamos lleva `[src#id]` y nunca
+    se trae de vuelta; lo traído lleva `[odoo#id]` y nunca se reenvía.
 - El resultado de cada acción se muestra en un aviso sobre el botón.
 
 **Popup**: pulsa el icono de la extensión con un lead abierto para las

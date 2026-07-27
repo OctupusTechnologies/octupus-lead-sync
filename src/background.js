@@ -69,6 +69,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
     return true;
   }
+  if (msg && msg.type === 'PULL_REMOTE_MESSAGES') {
+    (async () => {
+      const cfg = await getConfig();
+      const result = await fetchRemoteChatter(cfg, msg.destId);
+      if (result === null) return { ok: false, error: 'No se pudo leer el chatter de la oportunidad remota' };
+      return { ok: true, messages: parseRemoteMessages(result) };
+    })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
+    return true;
+  }
   if (msg && msg.type === 'LOG') {
     addLog(msg.entry || {})
       .then(() => sendResponse({ ok: true }))
@@ -490,12 +501,10 @@ function postRemoteComment(cfg, destId, body) {
 }
 
 /**
- * Lee el chatter de la oportunidad remota y devuelve los ids de origen ya
- * publicados (marcadores [src#id] en los cuerpos). Así el dedupe de
- * comentarios es compartido entre navegadores/usuarios, no solo local.
- * Devuelve null si no se pudo leer (se sigue con el registro local).
+ * Lee el chatter completo de la oportunidad remota (payload crudo del
+ * endpoint que responda). Devuelve null si ninguno funcionó.
  */
-async function fetchRemoteMarkers(cfg, destId) {
+async function fetchRemoteChatter(cfg, destId) {
   const intentos = [
     // Odoo 18/19 saas (www.odoo.com actual)
     [
@@ -517,18 +526,65 @@ async function fetchRemoteMarkers(cfg, destId) {
   for (const [path, params] of intentos) {
     try {
       const result = await portalRpc(cfg.portalUrl, path, params);
-      if (result === undefined || result === null) continue;
-      const ids = new Set();
-      const re = /\[src#(\d+)\]/g;
-      const text = JSON.stringify(result);
-      let m;
-      while ((m = re.exec(text)) !== null) ids.add(parseInt(m[1], 10));
-      return ids;
+      if (result !== undefined && result !== null) return result;
     } catch (e) {
       /* probar el siguiente endpoint */
     }
   }
   return null;
+}
+
+/**
+ * Ids de origen ya publicados en el chatter remoto (marcadores [src#id]).
+ * Dedupe de envíos compartido entre navegadores/usuarios. Devuelve null si
+ * no se pudo leer (se sigue con el registro local).
+ */
+async function fetchRemoteMarkers(cfg, destId) {
+  const result = await fetchRemoteChatter(cfg, destId);
+  if (result === null) return null;
+  const ids = new Set();
+  const re = /\[src#(\d+)\]/g;
+  const text = JSON.stringify(result);
+  let m;
+  while ((m = re.exec(text)) !== null) ids.add(parseInt(m[1], 10));
+  return ids;
+}
+
+/**
+ * Normaliza los mensajes del payload del chatter remoto a
+ * {id, body, author, date}. Soporta el formato mail.Store de Odoo 18/19
+ * ("mail.message" + "res.partner") y el clásico {messages: [...]}.
+ */
+function parseRemoteMessages(result) {
+  let messages = null;
+  let partners = [];
+  if (result && Array.isArray(result['mail.message'])) {
+    messages = result['mail.message'];
+    partners = Array.isArray(result['res.partner']) ? result['res.partner'] : [];
+  } else if (result && Array.isArray(result.messages)) {
+    messages = result.messages;
+  }
+  if (!messages) return [];
+
+  const partnerName = (pid) => {
+    const p = partners.find((x) => x && x.id === pid);
+    return (p && (p.name || p.display_name)) || null;
+  };
+
+  return messages
+    .map((m) => {
+      if (!m || !m.id || !m.body) return null;
+      if (m.message_type && m.message_type !== 'comment') return null;
+      let author = null;
+      if (Array.isArray(m.author_id)) author = m.author_id[1];
+      else if (m.author && typeof m.author === 'object') author = m.author.name || partnerName(m.author.id);
+      else if (typeof m.author_id === 'number') author = partnerName(m.author_id);
+      else if (m.author_id && typeof m.author_id === 'object') {
+        author = m.author_id.name || partnerName(m.author_id.id);
+      }
+      return { id: m.id, body: m.body, author: author || 'Odoo', date: m.date || m.datetime || '' };
+    })
+    .filter(Boolean);
 }
 
 /**

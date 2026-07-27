@@ -61,11 +61,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // respuesta asíncrona
   }
   if (msg && msg.type === 'UPDATE_CURRENT_LEAD') {
-    (async () => {
-      const leadId = await octupusCurrentLeadId();
-      if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
-      return octupusUpdateLead(leadId);
-    })()
+    octupusRunOnSynced((leadId, remoteId) => octupusUpdateData(leadId, remoteId))
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
+  }
+  if (msg && msg.type === 'PUSH_CURRENT_COMMENTS') {
+    octupusRunOnSynced((leadId, remoteId) => octupusPushComments(leadId, remoteId))
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
+  }
+  if (msg && msg.type === 'PULL_CURRENT_COMMENTS') {
+    octupusRunOnSynced((leadId, remoteId) => octupusPullComments(leadId, remoteId))
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
     return true;
@@ -83,8 +91,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
-/** Actualiza datos de contacto y comentarios de un lead ya sincronizado. */
-async function octupusUpdateLead(leadId) {
+/** Resuelve lead abierto + ID remoto y ejecuta la acción, con errores claros. */
+async function octupusRunOnSynced(accion) {
+  const leadId = await octupusCurrentLeadId();
+  if (!leadId) return { ok: false, error: 'No hay ningún lead abierto en esta pestaña' };
   let remoteId;
   try {
     remoteId = await octupusFindRemoteId(leadId);
@@ -97,6 +107,11 @@ async function octupusUpdateLead(leadId) {
   if (!remoteId) {
     return { ok: false, error: 'La nota del chatter no contiene el ID remoto: usa Re-vincular' };
   }
+  return accion(leadId, remoteId);
+}
+
+/** Actualiza SOLO los datos de contacto de la oportunidad remota. */
+async function octupusUpdateData(leadId, remoteId) {
   const leads = await octupusReadLeads([leadId]);
   if (!leads.length) return { ok: false, error: 'No se pudo leer el lead' };
   const result = await chrome.runtime.sendMessage({
@@ -105,12 +120,110 @@ async function octupusUpdateLead(leadId) {
     lead: leads[0],
     destId: remoteId,
   });
-  if (result && result.ok) {
-    result.destId = result.destId || remoteId;
-    const cr = await octupusSyncComments(leadId, remoteId, leads[0].name);
-    result.commentsPosted = (cr && cr.posted) || 0;
-  }
+  if (result && result.ok) result.destId = result.destId || remoteId;
   return result;
+}
+
+/** Empuja los mensajes del lead hacia la oportunidad remota. */
+async function octupusPushComments(leadId, remoteId) {
+  const nombre = await octupusLeadName(leadId);
+  const r = await octupusSyncComments(leadId, remoteId, nombre);
+  if (!r || r.ok === false) {
+    return { ok: false, error: (r && r.error) || 'No se pudieron enviar los mensajes', posted: 0 };
+  }
+  return { ok: true, posted: r.posted || 0, destId: remoteId };
+}
+
+/**
+ * Trae los mensajes del chatter remoto como notas internas del lead.
+ * Anti-eco y anti-duplicados:
+ *  - Se ignoran los mensajes remotos con [src#…] o "Octupus Lead Sync"
+ *    (nuestros propios envíos y notas) → nunca traemos lo nuestro.
+ *  - Cada nota traída lleva [odoo#<id remoto>] y el texto
+ *    "vía Octupus Lead Sync" → el filtro de empuje la excluye (sin eco
+ *    inverso) y el marcador evita traerla dos veces.
+ *  - Dedupe en dos capas: marcadores [odoo#id] del chatter del lead
+ *    (compartido) + registro local.
+ */
+async function octupusPullComments(leadId, remoteId) {
+  const resp = await chrome.runtime.sendMessage({ type: 'PULL_REMOTE_MESSAGES', destId: remoteId });
+  if (!resp || !resp.ok) {
+    return { ok: false, error: (resp && resp.error) || 'No se pudo leer el chatter remoto', pulled: 0 };
+  }
+
+  const existentes = await octupusFindPulledIds(leadId); // lanza si el chatter no se puede leer
+  const { pulled = {} } = await chrome.storage.local.get('pulled');
+  const key = `${window.location.origin}#${leadId}`;
+  const done = new Set([...(pulled[key] || []), ...existentes]);
+
+  let count = 0;
+  for (const m of resp.messages || []) {
+    if (!m || !m.id || done.has(m.id)) continue;
+    const text = octupusHtmlToText(m.body);
+    if (!text) continue;
+    if (text.includes('[src#') || text.includes('Octupus Lead Sync')) continue;
+    if (m.author === 'OdooBot') continue;
+    const body = `📥 ${m.author}${m.date ? ` (${m.date})` : ''} en odoo.com vía Octupus Lead Sync [odoo#${m.id}]:\n${text}`;
+    try {
+      await octupusPostNote(leadId, body, body);
+      done.add(m.id);
+      count++;
+    } catch (err) {
+      pulled[key] = [...done];
+      await chrome.storage.local.set({ pulled });
+      return { ok: false, error: `Nota no guardada: ${(err && err.message) || err}`, pulled: count };
+    }
+  }
+
+  pulled[key] = [...done];
+  await chrome.storage.local.set({ pulled });
+  if (count) {
+    chrome.runtime
+      .sendMessage({
+        type: 'LOG',
+        entry: {
+          ok: true,
+          name: await octupusLeadName(leadId),
+          srcId: leadId,
+          destId: remoteId,
+          origin: window.location.origin,
+          action: 'pull',
+          count,
+        },
+      })
+      .catch(() => {});
+  }
+  return { ok: true, pulled: count };
+}
+
+/** Ids remotos ya traídos, leyendo los marcadores [odoo#id] del chatter del lead. */
+async function octupusFindPulledIds(leadId) {
+  const msgs = await octupusCallKw('mail.message', 'search_read', [], {
+    domain: [
+      ['model', '=', 'crm.lead'],
+      ['res_id', '=', leadId],
+      ['body', 'like', 'odoo#'],
+    ],
+    fields: ['body'],
+    order: 'id desc',
+    limit: 100,
+  });
+  const ids = [];
+  for (const m of msgs || []) {
+    const re = /\[odoo#(\d+)\]/g;
+    let match;
+    while ((match = re.exec(String(m.body || ''))) !== null) ids.push(parseInt(match[1], 10));
+  }
+  return ids;
+}
+
+async function octupusLeadName(leadId) {
+  try {
+    const rows = await octupusCallKw('crm.lead', 'read', [[leadId], ['name']]);
+    return (rows && rows[0] && rows[0].name) || `lead #${leadId}`;
+  } catch (e) {
+    return `lead #${leadId}`;
+  }
 }
 
 /**
@@ -649,18 +762,24 @@ function octupusEnsureUi() {
     'display:none;max-width:300px;background:#1f2430;color:#fff;padding:8px 12px;' +
     'border-radius:10px;font-size:12px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.28);';
 
-  const update = document.createElement('button');
-  update.type = 'button';
-  update.style.cssText = octupusBtnCss('#e8eaf0', '#1f2430', '12px');
-  update.style.display = 'none';
+  const mkSecundario = () => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.style.cssText = octupusBtnCss('#e8eaf0', '#1f2430', '12px');
+    b.style.display = 'none';
+    return b;
+  };
+  const btnData = mkSecundario();
+  const btnPush = mkSecundario();
+  const btnPull = mkSecundario();
 
   const main = document.createElement('button');
   main.type = 'button';
   main.style.cssText = octupusBtnCss('#714b67', '#fff', '13px');
 
-  wrap.append(toast, update, main);
+  wrap.append(toast, btnData, btnPush, btnPull, main);
   document.documentElement.appendChild(wrap);
-  octupusUi = { wrap, main, update, toast };
+  octupusUi = { wrap, main, toast, btnData, btnPush, btnPull };
   return octupusUi;
 }
 
@@ -683,16 +802,18 @@ function octupusRenderWidget(leadId, remoteId, loading) {
     return;
   }
   ui.wrap.style.display = 'flex';
-  const { main, update } = ui;
+  const { main, btnData, btnPush, btnPull } = ui;
+  const secundarios = [btnData, btnPush, btnPull];
+  const ocultarSecundarios = () => secundarios.forEach((b) => (b.style.display = 'none'));
   main.disabled = Boolean(loading || octupusUiBusy);
-  update.disabled = main.disabled;
+  secundarios.forEach((b) => (b.disabled = main.disabled));
 
   if (loading) {
     main.textContent = '🐙 Comprobando…';
     main.style.background = '#9aa0ab';
     main.style.color = '#fff';
     main.onclick = null;
-    update.style.display = 'none';
+    ocultarSecundarios();
   } else if (remoteId === 'error') {
     // No se pudo leer el chatter: NUNCA ofrecer "Enviar" (riesgo de duplicado)
     main.textContent = '🐙 Estado desconocido · reintentar';
@@ -704,7 +825,7 @@ function octupusRenderWidget(leadId, remoteId, loading) {
       octupusRenderWidget(leadId, null, true);
       octupusUiRefresh(leadId);
     };
-    update.style.display = 'none';
+    ocultarSecundarios();
   } else if (remoteId) {
     main.textContent = `🐙 Sincronizado · #${remoteId}`;
     main.style.background = '#2e7d32';
@@ -714,23 +835,30 @@ function octupusRenderWidget(leadId, remoteId, loading) {
       const base = (config.portalUrl || 'https://www.odoo.com').replace(/\/+$/, '');
       window.open(`${base}/my/opportunity/${remoteId}`, '_blank');
     };
-    update.textContent = '↻ Actualizar datos y comentarios';
-    update.style.display = 'flex';
-    update.onclick = () => octupusUiUpdate(leadId, remoteId);
+    btnData.textContent = '↻ Actualizar datos';
+    btnData.style.display = 'flex';
+    btnData.onclick = () => octupusUiAction(leadId, remoteId, 'data');
+    btnPush.textContent = '📤 Enviar mensajes';
+    btnPush.style.display = 'flex';
+    btnPush.onclick = () => octupusUiAction(leadId, remoteId, 'push');
+    btnPull.textContent = '📥 Traer mensajes';
+    btnPull.style.display = 'flex';
+    btnPull.onclick = () => octupusUiAction(leadId, remoteId, 'pull');
   } else if (remoteId === 0) {
     main.textContent = '🐙 Sincronizado (ID desconocido)';
     main.style.background = '#b26a00';
     main.style.color = '#fff';
     main.onclick = null;
-    update.textContent = '🔁 Re-vincular con el portal';
-    update.style.display = 'flex';
-    update.onclick = () => octupusUiRelink(leadId);
+    ocultarSecundarios();
+    btnData.textContent = '🔁 Re-vincular con el portal';
+    btnData.style.display = 'flex';
+    btnData.onclick = () => octupusUiRelink(leadId);
   } else {
     main.textContent = '🐙 Enviar a odoo.com';
     main.style.background = '#714b67';
     main.style.color = '#fff';
     main.onclick = () => octupusUiSend(leadId);
-    update.style.display = 'none';
+    ocultarSecundarios();
   }
 }
 
@@ -762,23 +890,35 @@ async function octupusUiSend(leadId) {
   await octupusUiRefresh(leadId);
 }
 
-async function octupusUiUpdate(leadId, remoteId) {
+/** Ejecuta una de las tres acciones sobre un lead sincronizado. */
+async function octupusUiAction(leadId, remoteId, kind) {
   if (octupusUiBusy) return;
   octupusUiBusy = true;
   octupusRenderWidget(leadId, remoteId, true);
-  octupusToast('Actualizando datos y comentarios…', 0);
+  const enCurso = { data: 'Actualizando datos…', push: 'Enviando mensajes…', pull: 'Trayendo mensajes…' };
+  octupusToast(enCurso[kind], 0);
   try {
-    const r = await octupusUpdateLead(leadId);
+    let r;
+    if (kind === 'data') r = await octupusUpdateData(leadId, remoteId);
+    else if (kind === 'push') r = await octupusPushComments(leadId, remoteId);
+    else r = await octupusPullComments(leadId, remoteId);
+
     if (r && r.ok) {
-      const extra = r.commentsPosted ? ` · ${r.commentsPosted} comentario(s) enviados` : '';
-      octupusToast(`✔ Datos actualizados (ID remoto ${r.destId || remoteId})${extra}`);
+      if (kind === 'data') octupusToast(`✔ Datos actualizados (ID remoto ${r.destId || remoteId})`);
+      else if (kind === 'push') {
+        octupusToast(r.posted ? `✔ ${r.posted} mensaje(s) enviados al portal` : 'Nada nuevo que enviar');
+      } else {
+        octupusToast(r.pulled ? `✔ ${r.pulled} mensaje(s) traídos como notas` : 'Nada nuevo que traer');
+      }
     } else {
-      octupusToast(`✖ ${(r && r.error) || 'No se pudo actualizar'}`);
+      octupusToast(`✖ ${(r && r.error) || 'No se pudo completar la acción'}`, 10000);
     }
   } catch (err) {
-    octupusToast(`✖ ${(err && err.message) || err}`);
+    octupusToast(`✖ ${(err && err.message) || err}`, 10000);
   }
   octupusUiBusy = false;
+  // Traer mensajes añade notas al chatter propio: refrescar estado sin caché
+  octupusRemoteCache.delete(leadId);
   await octupusUiRefresh(leadId);
 }
 

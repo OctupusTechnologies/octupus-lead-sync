@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.0 — 2026-07-27
+
+### Añadido
+- **Traer mensajes** (widget y popup): nueva acción que importa los mensajes
+  del chatter de la oportunidad remota como **notas internas** del lead de
+  origen, con autor y fecha. Anti-eco y anti-duplicados simétricos al envío:
+  los mensajes remotos con `[src#…]` o "Octupus Lead Sync" (nuestros propios
+  envíos) nunca se traen; cada nota traída lleva `[odoo#<id remoto>]` y el
+  texto "vía Octupus Lead Sync", con lo que el filtro de empuje la excluye
+  (sin eco inverso) y el marcador evita traerla dos veces. Dedupe en dos
+  capas: marcadores del chatter del lead (compartido) + registro local.
+
+### Cambiado
+- **Acciones separadas** para leads sincronizados: "↻ Actualizar datos"
+  (solo contacto), "📤 Enviar mensajes" y "📥 Traer mensajes" — antes datos y
+  mensajes iban juntos en un único botón. El envío inicial sigue haciendo el
+  ciclo completo (crear + contacto + nota + empujar mensajes).
+
 ## 1.3.0 — 2026-07-27
 
 ### Añadido

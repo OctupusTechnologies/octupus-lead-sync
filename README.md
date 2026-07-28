@@ -53,7 +53,11 @@ qué puedes hacer:
 
 El resultado de cada acción aparece en un aviso sobre el botón. El
 **popup** (icono de la extensión en la barra) ofrece las mismas acciones
-más el estado de la sesión de odoo.com y el historial de envíos y errores.
+más el estado de la sesión de odoo.com, el historial de envíos y errores,
+y un **listado de los leads activos** del CRM (los 15 con actividad más
+reciente): cada uno muestra su etapa y un badge verde 🐙 #ID si ya está
+sincronizado con el portal; clic en cualquiera lo abre en el CRM. El
+listado funciona aunque no tengas ninguna pestaña de Odoo abierta.
 
 ## Qué hace por detrás (y por qué no duplica nada)
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0 — 2026-07-27
+
+### Añadido
+- **Listado de leads activos en el popup**: los 15 leads/oportunidades con
+  actividad más reciente del CRM de Octupus, con su etapa y el badge 🐙 #ID
+  si ya están sincronizados (estado resuelto con una sola consulta al
+  chatter). Clic en un lead lo abre en el CRM. Funciona sin pestaña de Odoo
+  abierta: el service worker consulta el CRM con la sesión del navegador.
+- Nueva opción "URL del CRM de Octupus" (por defecto
+  https://octupus.odoo.com) para el listado.
+
 ## 1.4.7 — 2026-07-27
 
 ### Añadido

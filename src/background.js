@@ -13,6 +13,7 @@
 
 const DEFAULTS = {
   portalUrl: 'https://www.odoo.com',
+  crmUrl: 'https://octupus.odoo.com',
   sourceLabel: 'Octupus',
 };
 
@@ -76,6 +77,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (result === null) return { ok: false, error: 'No se pudo leer el chatter de la oportunidad remota' };
       return { ok: true, messages: parseRemoteMessages(result) };
     })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
+    return true;
+  }
+  if (msg && msg.type === 'LIST_LEADS') {
+    listActiveLeads()
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
     return true;
@@ -646,6 +653,77 @@ async function syncComments(origin, leadId, destId, leadName, comments) {
     });
   }
   return { ok: true, posted };
+}
+
+/**
+ * Lista los leads/oportunidades activos del CRM de Octupus (con la sesión
+ * del navegador, sin necesidad de pestaña abierta) y resuelve su estado de
+ * sincronización con UNA sola consulta al chatter de todos ellos.
+ */
+async function listActiveLeads() {
+  const cfg = await getConfig();
+  let leads;
+  try {
+    leads = await portalRpc(cfg.crmUrl, '/web/dataset/call_kw/crm.lead/search_read', {
+      model: 'crm.lead',
+      method: 'search_read',
+      args: [],
+      kwargs: {
+        domain: [['type', 'in', ['lead', 'opportunity']]],
+        fields: ['id', 'name', 'type', 'stage_id', 'partner_name', 'contact_name'],
+        order: 'write_date desc',
+        limit: 15,
+        context: {},
+      },
+    });
+  } catch (err) {
+    throw new Error(`CRM (${cfg.crmUrl}): ${errMsg(err)}`);
+  }
+
+  // Estado de sincronización de todos los listados en una consulta
+  const syncMap = {};
+  const ids = (leads || []).map((l) => l.id);
+  if (ids.length) {
+    try {
+      const notas = await portalRpc(cfg.crmUrl, '/web/dataset/call_kw/mail.message/search_read', {
+        model: 'mail.message',
+        method: 'search_read',
+        args: [],
+        kwargs: {
+          domain: [
+            ['model', '=', 'crm.lead'],
+            ['res_id', 'in', ids],
+            ['body', 'like', 'Octupus Lead Sync'],
+            ['body', 'like', 'my/opportunity/'],
+          ],
+          fields: ['res_id', 'body'],
+          limit: 200,
+          context: {},
+        },
+      });
+      for (const n of notas || []) {
+        const body = String(n.body || '');
+        if (body.includes('[odoo#')) continue; // nota traída, no de vinculación
+        const m = body.match(/my\/opportunity\/(\d+)/);
+        if (m && !syncMap[n.res_id]) syncMap[n.res_id] = parseInt(m[1], 10);
+      }
+    } catch (e) {
+      /* sin estado de sincronización: la lista sigue siendo útil */
+    }
+  }
+
+  return {
+    ok: true,
+    crmUrl: cfg.crmUrl,
+    leads: (leads || []).map((l) => ({
+      id: l.id,
+      name: l.name,
+      type: l.type,
+      stage: (l.stage_id && l.stage_id[1]) || '',
+      contact: l.partner_name || l.contact_name || '',
+      synced: syncMap[l.id] || null,
+    })),
+  };
 }
 
 async function addLog(entry) {

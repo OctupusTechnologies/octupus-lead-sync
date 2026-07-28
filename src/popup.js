@@ -209,8 +209,59 @@ async function runManualAction(tabId, leadId, type, remoteId) {
   render(); // refrescar la lista de envíos
 }
 
+/** Lista los leads activos del CRM; clic abre el lead en una pestaña. */
+async function renderLeads() {
+  const status = $('leadsStatus');
+  const list = $('leadsList');
+  list.innerHTML = '';
+  status.hidden = false;
+  status.textContent = 'Cargando leads…';
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'LIST_LEADS' });
+    if (!r || !r.ok) {
+      status.textContent = `✖ ${(r && r.error) || 'No se pudieron cargar los leads'}`;
+      return;
+    }
+    if (!r.leads.length) {
+      status.textContent = 'Sin leads activos en el CRM';
+      return;
+    }
+    status.hidden = true;
+    for (const l of r.leads) {
+      const li = document.createElement('li');
+      li.title = `${l.name}${l.contact ? ` — ${l.contact}` : ''} · clic para abrir en el CRM`;
+
+      const name = document.createElement('span');
+      name.className = 'lead-name';
+      name.textContent = l.name || `lead #${l.id}`;
+      li.append(name);
+
+      if (l.stage) {
+        const st = document.createElement('span');
+        st.className = 'tag';
+        st.textContent = l.stage;
+        li.append(st);
+      }
+      if (l.synced) {
+        const s = document.createElement('span');
+        s.className = 'tag sync';
+        s.textContent = `🐙 #${l.synced}`;
+        s.title = 'Sincronizado con el portal de odoo.com';
+        li.append(s);
+      }
+      li.onclick = () => chrome.tabs.create({ url: `${r.crmUrl}/odoo/crm/${l.id}` });
+      list.append(li);
+    }
+  } catch (err) {
+    status.textContent = `✖ ${err.message || err}`;
+  }
+}
+
+$('refreshLeads').addEventListener('click', renderLeads);
+
 $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 render();
 renderSession();
 initManual();
+renderLeads();

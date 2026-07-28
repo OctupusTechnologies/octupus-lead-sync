@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Octupus Lead Sync",
-  "version": "1.4.7",
+  "version": "1.5.0",
   "description": "Envía leads del CRM de Odoo al portal de partners de odoo.com con un clic (origen Octupus), con nota de trazabilidad y sincronización de comentarios.",
   "permissions": ["storage", "cookies"],
   "host_permissions": ["https://*.odoo.com/*"],

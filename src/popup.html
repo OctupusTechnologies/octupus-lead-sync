@@ -31,6 +31,43 @@
       cursor: pointer;
       font-size: .8rem;
     }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: .7rem;
+    }
+    button.mini {
+      padding: .1rem .5rem;
+      border: 1px solid #c4c9d4;
+      background: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .8rem;
+    }
+    ul.leads { max-height: 190px; }
+    ul.leads li { cursor: pointer; display: flex; align-items: center; gap: .5rem; }
+    ul.leads li:hover { background: #f4f5f8; }
+    ul.leads .lead-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    ul.leads .tag {
+      flex-shrink: 0;
+      font-size: .68rem;
+      padding: .05rem .4rem;
+      border-radius: 8px;
+      background: #eef0f4;
+      color: #6b7280;
+      max-width: 90px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    ul.leads .tag.sync { background: #e6f4ea; color: #2e7d32; }
     ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
     li {
       padding: .45rem .3rem;
@@ -88,7 +125,14 @@
     </button>
     <div id="manualStatus" class="manual-status"></div>
   </div>
-  <div><strong>Últimos envíos</strong></div>
+  <div class="section-head">
+    <strong>Leads activos</strong>
+    <button id="refreshLeads" class="mini" title="Recargar la lista">↻</button>
+  </div>
+  <ul id="leadsList" class="leads"></ul>
+  <div id="leadsStatus" class="empty" hidden></div>
+
+  <div class="section-head"><strong>Últimos envíos</strong></div>
   <ul id="log"></ul>
   <div id="empty" class="empty" hidden>Todavía no se ha sincronizado ningún lead.</div>
   <script src="popup.js"></script>

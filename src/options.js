@@ -2,6 +2,7 @@
 
 const DEFAULTS = {
   portalUrl: 'https://www.odoo.com',
+  crmUrl: 'https://octupus.odoo.com',
   sourceLabel: 'Octupus',
   syncNotes: true,
 };
@@ -12,6 +13,7 @@ async function load() {
   const { config = {} } = await chrome.storage.local.get('config');
   const cfg = { ...DEFAULTS, ...config };
   $('portalUrl').value = cfg.portalUrl;
+  $('crmUrl').value = cfg.crmUrl;
   $('sourceLabel').value = cfg.sourceLabel;
   $('syncNotes').checked = cfg.syncNotes !== false;
 }
@@ -19,6 +21,7 @@ async function load() {
 function readForm() {
   return {
     portalUrl: ($('portalUrl').value.trim() || DEFAULTS.portalUrl).replace(/\/+$/, ''),
+    crmUrl: ($('crmUrl').value.trim() || DEFAULTS.crmUrl).replace(/\/+$/, ''),
     sourceLabel: $('sourceLabel').value.trim() || 'Octupus',
     syncNotes: $('syncNotes').checked,
   };

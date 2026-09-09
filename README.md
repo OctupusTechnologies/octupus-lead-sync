@@ -2,6 +2,8 @@
 
 📖 **Documentación en línea:** [octupustechnologies.github.io/octupus-lead-sync](https://octupustechnologies.github.io/octupus-lead-sync/)
 
+⬇️ **Descargar la última versión:** [octupus-lead-sync.zip](https://github.com/OctupusTechnologies/octupus-lead-sync/releases/latest/download/octupus-lead-sync.zip) · [historial de versiones](https://github.com/OctupusTechnologies/octupus-lead-sync/releases)
+
 Extensión de Chrome para el equipo de Octupus que **sincroniza leads de
 nuestro CRM (`octupus.odoo.com`) con el portal de partners de odoo.com**
 con un clic: crea la oportunidad en el portal, rellena los datos de
@@ -22,9 +24,10 @@ propias sesiones de navegador.
 
 ## Instalación
 
-1. Descarga la extensión: en este repositorio, botón verde **Code →
-   Download ZIP**, y descomprime el archivo donde no lo vayas a borrar
-   (p. ej. `Documentos/octupus-lead-sync`).
+1. Descarga la última versión: **[octupus-lead-sync.zip](https://github.com/OctupusTechnologies/octupus-lead-sync/releases/latest/download/octupus-lead-sync.zip)**
+   (todas las versiones en [Releases](https://github.com/OctupusTechnologies/octupus-lead-sync/releases)), y descomprime
+   el archivo donde no lo vayas a borrar (p. ej.
+   `Documentos/octupus-lead-sync`).
 2. Abre Chrome y entra en `chrome://extensions`.
 3. Activa el **Modo de desarrollador** (interruptor arriba a la derecha).
 4. Pulsa **"Cargar descomprimida"** y selecciona la carpeta que
@@ -90,8 +93,9 @@ listado funciona aunque no tengas ninguna pestaña de Odoo abierta.
 
 ## Actualizar la extensión
 
-Cuando haya versión nueva: descarga otra vez el ZIP (o `git pull` si
-clonaste el repo), reemplaza la carpeta, y en `chrome://extensions` pulsa
+Cuando haya versión nueva: descarga otra vez el [ZIP](https://github.com/OctupusTechnologies/octupus-lead-sync/releases/latest/download/octupus-lead-sync.zip) (o
+`git pull` si clonaste el repo), reemplaza la carpeta, y en
+`chrome://extensions` pulsa
 el botón ↻ de la extensión. Después recarga las pestañas de Odoo abiertas.
 Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
 

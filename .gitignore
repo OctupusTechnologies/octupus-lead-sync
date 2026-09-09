@@ -1,2 +1,4 @@
 .DS_Store
 *.zip
+site/
+__pycache__/

@@ -136,8 +136,20 @@ octupus-lead-sync/
 │   │                    #   comentarios contra el portal con tu sesión
 │   ├── options.html/js  # configuración del portal
 │   └── popup.html/js    # estado de sesión, acciones y últimos envíos
-└── README.md
+├── icons/               # logo (SVG fuente y PNG 16/32/48/128)
+├── README.md            # guía de uso (portada del sitio de documentación)
+├── CHANGELOG.md         # cambios por versión
+├── docs/
+│   ├── ARQUITECTURA.md  # este documento
+│   └── hooks/           # hook de MkDocs que inyecta README y CHANGELOG
+├── mkdocs.yml           # sitio de documentación (MkDocs Material)
+└── .github/workflows/docs.yml  # despliegue a GitHub Pages
 ```
+
+La documentación se publica en
+<https://octupustechnologies.github.io/octupus-lead-sync/> con cada push a
+`main` (GitHub Actions → GitHub Pages). Para verla en local:
+`pip install mkdocs-material && mkdocs serve`.
 
 ## Limitaciones conocidas
 

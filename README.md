@@ -1,5 +1,7 @@
 # 🐙 Octupus Lead Sync
 
+📖 **Documentación en línea:** [octupustechnologies.github.io/octupus-lead-sync](https://octupustechnologies.github.io/octupus-lead-sync/)
+
 Extensión de Chrome para el equipo de Octupus que **sincroniza leads de
 nuestro CRM (`octupus.odoo.com`) con el portal de partners de odoo.com**
 con un clic: crea la oportunidad en el portal, rellena los datos de

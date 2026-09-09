@@ -1,0 +1,68 @@
+# Sitio de documentación (GitHub Pages) · https://octupustechnologies.github.io/octupus-lead-sync/
+# Se construye con MkDocs Material desde .github/workflows/docs.yml.
+# La guía de uso (README.md) y el CHANGELOG.md se inyectan en el build desde la
+# raíz del repo (docs/hooks/root_docs.py), así no hay copias que mantener.
+
+site_name: Octupus Lead Sync
+site_description: >-
+  Extensión de Chrome que sincroniza leads del CRM de Octupus con el portal de
+  partners de odoo.com: datos, mensajes bidireccionales y trazabilidad, sin duplicados.
+site_url: https://octupustechnologies.github.io/octupus-lead-sync/
+repo_url: https://github.com/OctupusTechnologies/octupus-lead-sync
+repo_name: OctupusTechnologies/octupus-lead-sync
+edit_uri: ""
+copyright: "© Octupus Technologies S.L."
+
+nav:
+  - Guía de uso: index.md
+  - Arquitectura: ARQUITECTURA.md
+  - Changelog: changelog.md
+
+exclude_docs: |
+  hooks/
+
+hooks:
+  - docs/hooks/root_docs.py
+
+theme:
+  name: material
+  language: es
+  logo: assets/icon.svg
+  favicon: assets/icon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Cambiar a modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Cambiar a modo claro
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search:
+      lang: es
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details

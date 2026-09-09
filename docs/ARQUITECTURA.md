@@ -10,9 +10,10 @@ cuándo.
 
 1. Al abrir un lead en el backend de Odoo aparece un **widget flotante**
    (abajo a la derecha) que consulta el chatter y muestra el estado:
-   **"🐙 Enviar a odoo.com"** si no está sincronizado, o
+   **"🐙 Enviar lead a odoo.com"** si no está sincronizado, o
    **"🐙 Sincronizado · #ID"** (clic → abre la oportunidad en el portal) con
-   el botón **"↻ Actualizar datos y comentarios"** si ya lo está.
+   tres acciones separadas si ya lo está: actualizar contacto, enviar
+   mensajes y traer mensajes (ver [Uso](#uso)).
 2. Al pulsar Enviar, lee los datos del lead usando **tu propia sesión de
    Odoo** (no necesita credenciales de la instancia origen).
 3. El service worker crea la oportunidad en el portal de partners con:
@@ -36,35 +37,33 @@ cuándo.
 5. Tras cada envío correcto deja una **nota interna en el chatter del lead
    de origen** con el ID remoto y el enlace `…/my/opportunity/<id>` del
    portal.
-5b. **Comentarios**: tras enviar o al pulsar "Actualizar datos", los mensajes
-   del chatter del lead se publican en el chatter de la oportunidad remota
-   vía `/mail/message/post`, en texto plano con autor, fecha y marcador
-   `[src#id]`. Se envían los comentarios públicos (💬, "Enviar mensaje") y,
-   con la opción "Enviar también las notas internas" activada (por defecto
-   sí), las notas (📝, "Registrar nota"). Las notas de la propia extensión y
-   las notificaciones de sistema nunca se envían. Dedupe en dos capas: antes
-   de publicar se lee el chatter remoto y se extraen los marcadores
-   `[src#id]` ya presentes (compartido entre usuarios/navegadores), más el
-   registro en almacenamiento local (máx. 50 mensajes por lead).
-   Ojo: publicar como comentario puede notificar por email a los seguidores
-   de la oportunidad en odoo.com (p. ej. tu account manager).
-6. Anti-duplicados en tres capas:
-   - **Chatter (fuente de verdad)**: antes de enviar se busca la nota
-     "Octupus Lead Sync" en el lead y se extrae el ID remoto; si existe, no
-     se reenvía (aunque lo haya enviado otro compañero desde su navegador).
-   - **Portal de odoo.com**: `website_crm_partner_assign` concede a los
-     usuarios portal lectura sobre `crm.lead` (limitada a sus oportunidades
-     asignadas), así que se busca con `search_read` y `active_test: false`
-     (incluye las perdidas), por criterios escalonados: **título + email**,
-     **título**, y **email solo** (este último únicamente si la coincidencia
-     es única — el email identifica al cliente, no al negocio). Si la
-     instancia no lo permite, se recorre el listado HTML como fallback.
-     Si hay coincidencia **y ningún otro lead reclama ya ese ID** (se
-     comprueba en las notas 🐙 del origen), se **vincula** la oportunidad
-     existente sin crear duplicado y sin tocar los datos remotos. Si otro
-     lead la reclama, se asume que es un negocio distinto con el mismo
-     título y se crea una nueva.
-   - **Almacenamiento local** de la extensión, como última capa.
+5b. **Comentarios**: tras el envío inicial, o al pulsar **"⬆️ Enviar mensajes
+   a odoo.com"**, los mensajes del chatter del lead se publican en el chatter
+   de la oportunidad remota vía `/mail/message/post`, en texto plano con
+   autor, fecha y marcador `[src#id]`. Se envían los comentarios públicos (💬,
+   "Enviar mensaje") y, con la opción "Enviar también las notas internas"
+   activada (por defecto sí), las notas (📝, "Registrar nota"). Las notas de la
+   propia extensión y las notificaciones de sistema nunca se envían. Dedupe en
+   dos capas: antes de publicar se leen los últimos 100 mensajes del chatter
+   remoto y se extraen los marcadores `[src#id]` ya presentes (compartido
+   entre usuarios/navegadores), más el registro en almacenamiento local. Ojo:
+   publicar como comentario puede notificar por email a los seguidores de la
+   oportunidad en odoo.com (p. ej. tu account manager). 6. Anti-duplicados en
+   tres capas: - **Chatter (fuente de verdad)**: antes de enviar se busca la
+   nota "Octupus Lead Sync" en el lead y se extrae el ID remoto; si existe, no
+   se reenvía (aunque lo haya enviado otro compañero desde su navegador). -
+   **Portal de odoo.com**: `website_crm_partner_assign` concede a los usuarios
+   portal lectura sobre `crm.lead` (limitada a sus oportunidades asignadas),
+   así que se busca con `search_read` y `active_test: false` (incluye las
+   perdidas), por criterios escalonados: **título + email**, **título**, y
+   **email solo** (este último únicamente si la coincidencia es única — el
+   email identifica al cliente, no al negocio). Si la instancia no lo permite,
+   se recorre el listado HTML como fallback. Si hay coincidencia **y ningún
+   otro lead reclama ya ese ID** (se comprueba en las notas 🐙 del origen), se
+   **vincula** la oportunidad existente sin crear duplicado y sin tocar los
+   datos remotos. Si otro lead la reclama, se asume que es un negocio distinto
+   con el mismo título y se crea una nueva. - **Almacenamiento local** de la
+   extensión, como última capa.
 
    Seguridad ante fallos: si el chatter del lead no se puede leer, el envío
    se **cancela** (el widget muestra "Estado desconocido · reintentar") —
@@ -72,32 +71,46 @@ cuándo.
    recupera buscando la oportunidad recién creada por título.
 
 7. **Re-vincular** (vía de escape): si una nota quedó sin ID remoto o la
-   oportunidad se borró en el portal, el botón "🔁 Re-vincular" (widget y
-   popup) re-busca por título y reescribe la nota con el ID. Nunca crea nada
-   nuevo; si no encuentra la oportunidad, indica cómo proceder.
+   oportunidad se borró en el portal, el botón "🔗 Re-vincular con el portal"
+   (widget y popup) re-busca por título y reescribe la nota con el ID. Nunca
+   crea nada nuevo; si no encuentra la oportunidad, indica cómo proceder.
 
 ## Requisito único
 
-Estar **logueado en www.odoo.com** (portal de partners) en el mismo perfil
-de Chrome. La extensión lo comprueba y te avisa en el popup si la sesión
-falta o ha caducado.
+Estar **logueado en www.odoo.com** (portal de partners) y en el CRM de
+origen en el mismo perfil de Chrome. La extensión comprueba la sesión del
+portal y te avisa en el popup si falta o ha caducado; si la del CRM falta,
+las acciones lo indican con un mensaje claro.
 
 ## Instalación
 
-1. Abre Chrome y ve a `chrome://extensions`.
-2. Activa el **Modo de desarrollador** (esquina superior derecha).
-3. Pulsa **"Cargar descomprimida"** y selecciona la carpeta
-   `octupus-lead-sync/`.
+1. Descarga el ZIP de la [última release](https://github.com/OctupusTechnologies/octupus-lead-sync/releases/latest/download/octupus-lead-sync.zip)
+   (o clona el repositorio) y descomprímelo.
+2. Abre Chrome y ve a `chrome://extensions`.
+3. Activa el **Modo de desarrollador** (esquina superior derecha).
+4. Pulsa **"Cargar descomprimida"** y selecciona la carpeta que contiene
+   `manifest.json`.
 
 ## Configuración
 
 Clic derecho en el icono → **Opciones** (o botón del popup):
 
 - **URL del portal**: `https://www.odoo.com` (valor por defecto).
+- **URL del CRM de Octupus**: `https://octupus.odoo.com` (valor por
+  defecto). La usa el service worker para el listado de leads activos del
+  popup, que funciona sin pestaña de Odoo abierta.
 - **Etiqueta de origen**: texto añadido como `Origen: …` en la descripción
   (por defecto "Octupus").
+- **Enviar también las notas internas como comentarios** (activado por
+  defecto): incluye las notas 📝 del chatter en lo que se sube al portal,
+  además de los comentarios 💬.
 - **Probar sesión**: verifica que la cookie de odoo.com es válida y muestra
   con qué usuario estás conectado.
+
+Al guardar se valida que las dos URLs sean http(s) y, si alguna no está bajo
+`*.odoo.com`, Chrome pide el permiso de host de ese dominio
+(`optional_host_permissions` del manifest). Sin ese permiso la sincronización
+con ese dominio falla, y la página de Opciones lo avisa.
 
 ## Uso
 
@@ -121,8 +134,13 @@ formulario). Abajo a la derecha aparece el widget:
   resultado de cada acción se muestra en un aviso sobre el botón.
 
 **Popup**: pulsa el icono de la extensión con un lead abierto para las
-mismas acciones, además del estado de la sesión de odoo.com y el historial
-de envíos y errores.
+mismas acciones, además del estado de la sesión de odoo.com, el historial de
+envíos y errores (últimas 50 entradas) y el **listado de leads activos** del
+CRM: los 15 con actividad más reciente, con su etapa y el badge 🐙 #ID si ya
+están sincronizados. El estado se resuelve leyendo de golpe las notas 🐙 del
+CRM (una sola consulta, hasta 200 notas). Clic en un lead lo abre en el CRM.
+El listado funciona sin ninguna pestaña de Odoo abierta porque lo consulta el
+service worker con la sesión del navegador.
 
 ## Estructura
 
@@ -198,8 +216,11 @@ Convenciones del código:
 - Requiere sesión activa en www.odoo.com; si caduca, el envío falla y queda
   registrado en el popup (el lead no se marca como enviado; reintenta desde
   el widget).
-- Funciona en instancias origen `https://*.odoo.com`. Para un dominio propio
-  hay que añadir su patrón en `content_scripts.matches` del `manifest.json`.
+- El widget solo se inyecta en instancias origen `https://*.odoo.com`. Para
+  un dominio propio hay que añadir su patrón en `content_scripts.matches` del
+  `manifest.json`. El listado de leads del popup sí admite un CRM en dominio
+  propio: basta con conceder el permiso de host que Chrome pide al guardar
+  Opciones.
 - El widget detecta el lead por la URL (`#id=…&model=crm.lead` en Odoo ≤16 y
   `/odoo/crm/<id>` en Odoo 17+); en un registro sin guardar (URL sin id) no
   aparece.

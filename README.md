@@ -86,10 +86,12 @@ listado funciona aunque no tengas ninguna pestaña de Odoo abierta.
 | Síntoma | Solución |
 |---|---|
 | No aparece el widget en el lead | Recarga la pestaña de Odoo (los scripts se inyectan al cargar la página). Comprueba que la URL es de un lead concreto (vista formulario). |
-| "No hay cookie de sesión…" o "Sesión caducada" | Inicia sesión en www.odoo.com en este mismo perfil de Chrome y reintenta. |
+| "No hay cookie de sesión…" o "Sesión de … caducada" | Inicia sesión en la web que indica el mensaje (www.odoo.com o el CRM) en este mismo perfil de Chrome y reintenta. |
+| "Respuesta no JSON de …: probablemente no hay sesión iniciada" o "HTTP 404/500 al llamar a …" | El CRM o el portal han devuelto una página (login, error) en vez de datos: inicia sesión en esa web o revisa que la URL en Opciones sea la correcta. |
 | ⚠️ Estado desconocido | Suele ser un corte puntual: clic para reintentar. Si persiste, revisa tu sesión de octupus.odoo.com. |
 | "Ya existía en el portal: vinculado…" | No es un error: la oportunidad ya estaba en el portal y la extensión la ha conectado sin duplicar. |
 | Envié el lead pero quiero pasarle los últimos mensajes | Botón ⬆️ "Enviar mensajes a odoo.com" — solo viajan los que falten. |
+| Al guardar Opciones dice "Guardado, pero sin permiso para …" | Has puesto una URL fuera de `*.odoo.com` y Chrome pide permiso para ese dominio. Pulsa Guardar otra vez y acepta el aviso de Chrome. |
 
 ## Actualizar la extensión
 

@@ -130,13 +130,20 @@ de envíos y errores.
 octupus-lead-sync/
 ├── manifest.json        # Manifest V3 (permisos: storage, cookies)
 ├── src/
+│   ├── shared.js        # constantes (mensajes, claves de storage, marcas 🐙),
+│   │                    #   helpers puros y transporte JSON-RPC; expone
+│   │                    #   globalThis.OctupusShared en los tres contextos
 │   ├── bridge.js        # content script: widget flotante, lectura del lead
 │   │                    #   y del chatter con tu sesión, notas 🐙
 │   ├── background.js    # service worker: create_opp_portal, contacto y
 │   │                    #   comentarios contra el portal con tu sesión
-│   ├── options.html/js  # configuración del portal
-│   └── popup.html/js    # estado de sesión, acciones y últimos envíos
+│   ├── popup.html/js/css    # sesión, acciones, leads activos e historial
+│   ├── options.html/js/css  # configuración del portal y del CRM
+│   └── common.css       # paleta y base compartida por popup y opciones
+├── test/                # tests unitarios de shared.js (node --test)
 ├── icons/               # logo (SVG fuente y PNG 16/32/48/128)
+├── package.json         # sin build: solo lint (ESLint), formato (Prettier) y tests
+├── eslint.config.mjs · .prettierrc · .editorconfig
 ├── README.md            # guía de uso (portada del sitio de documentación)
 ├── CHANGELOG.md         # cambios por versión
 ├── docs/
@@ -150,6 +157,41 @@ La documentación se publica en
 <https://octupustechnologies.github.io/octupus-lead-sync/> con cada push a
 `main` (GitHub Actions → GitHub Pages). Para verla en local:
 `pip install mkdocs-material && mkdocs serve`.
+
+## Desarrollo
+
+La extensión es JavaScript plano sin paso de build: se carga descomprimida
+tal cual. `package.json` solo aporta herramientas de calidad:
+
+```
+npm install        # una vez
+npm run check      # lint (ESLint) + formato (Prettier) + tests (node --test)
+npm run format     # aplica el formato
+```
+
+Convenciones del código:
+
+- **`src/shared.js`** concentra todo lo que comparten los tres contextos
+  (service worker, content script y páginas): tipos de mensaje `MSG.*`,
+  claves de `chrome.storage` `STORAGE.*`, marcas de trazabilidad `MARK.*`,
+  helpers puros y el transporte JSON-RPC. Los content scripts no admiten
+  `import` y no hay bundler, así que se carga como script clásico (antes que
+  el resto, ver `manifest.json` y los `<script>` de las páginas) y expone el
+  namespace congelado `globalThis.OctupusShared`. Lo que necesiten dos
+  archivos va ahí, nunca duplicado.
+- Los mensajes entre contextos se despachan con una **tabla `tipo → handler`**
+  en `background.js` y `bridge.js`. Añadir un mensaje es añadir la constante
+  en `MSG` y una entrada en la tabla; el listener común se encarga de la
+  respuesta asíncrona y de convertir excepciones en `{ok:false, error}`.
+- Los límites (nº de mensajes leídos, páginas del portal, tamaño del
+  historial…) y la paleta del widget son constantes con nombre, no números
+  o colores sueltos.
+- Los tests (`test/`) cubren los helpers puros de `shared.js` (parsers de
+  marcadores, slug, mensajes del portal…). La lógica que habla con Odoo se
+  prueba a mano en el navegador: recarga la extensión en `chrome://extensions`
+  y las pestañas de Odoo abiertas.
+- Las funciones del content script llevan prefijo `octupus` para
+  distinguirlas del código de Odoo en las trazas de DevTools.
 
 ## Limitaciones conocidas
 

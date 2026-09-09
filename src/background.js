@@ -7,135 +7,136 @@
  *
  * No se necesita clave API: al tener la extensión permiso de host sobre
  * *.odoo.com, los fetch con credentials:'include' adjuntan la cookie de
- * sesión automáticamente.
+ * sesión automáticamente. Lo mismo vale para el CRM de origen (listado de
+ * leads del popup).
  */
 'use strict';
 
-const DEFAULTS = {
-  portalUrl: 'https://www.odoo.com',
-  crmUrl: 'https://octupus.odoo.com',
-  sourceLabel: 'Octupus',
-};
+importScripts('shared.js');
 
-let rpcId = 1;
+const {
+  MSG,
+  STORAGE,
+  MARK,
+  RE_SRC_MARKER,
+  DEFAULTS,
+  errMsg,
+  stripTrailingSlash,
+  leadKey,
+  escapeIlike,
+  odooSlug,
+  linkedPortalId,
+  collectIds,
+  extractOpportunities,
+  parseRemoteMessages,
+  jsonRpc,
+  readStorage,
+  writeStorage,
+  getConfig,
+} = globalThis.OctupusShared;
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.type === 'SYNC_LEADS') {
-    syncLeads(msg.origin, msg.leads)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true; // respuesta asíncrona
-  }
-  if (msg && msg.type === 'UPDATE_LEAD') {
-    updateLead(msg.origin, msg.lead, msg.destId)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'SYNC_COMMENTS') {
-    syncComments(msg.origin, msg.leadId, msg.destId, msg.leadName, msg.comments)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, posted: 0, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'FIND_REMOTE') {
-    (async () => {
-      const cfg = await getConfig();
-      const destId = await findRemotePortalOpportunity(cfg, msg.title, msg.email);
-      return { ok: true, destId, portalUrl: cfg.portalUrl };
-    })()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'MARK_LINKED') {
-    (async () => {
-      const cfg = await getConfig();
-      const { sent = {} } = await chrome.storage.local.get('sent');
-      const key = `${msg.origin}#${msg.leadId}`;
-      const prev = sent[key] || {};
-      sent[key] = { ...prev, destId: msg.destId, at: prev.at || new Date().toISOString() };
-      await chrome.storage.local.set({ sent });
-      await addLog({
-        ok: true,
-        name: msg.name || `lead #${msg.leadId}`,
-        srcId: msg.leadId,
-        destId: msg.destId,
-        origin: msg.origin,
-        action: 'link',
-      });
-      return { ok: true, portalUrl: cfg.portalUrl };
-    })()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'PULL_REMOTE_MESSAGES') {
-    (async () => {
-      const cfg = await getConfig();
-      const result = await fetchRemoteChatter(cfg, msg.destId);
-      if (result === null) return { ok: false, error: 'No se pudo leer el chatter de la oportunidad remota' };
-      return { ok: true, messages: parseRemoteMessages(result) };
-    })()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'LIST_LEADS') {
-    listActiveLeads()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  if (msg && msg.type === 'LOG') {
-    addLog(msg.entry || {})
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-  if (msg && msg.type === 'CHECK_SESSION') {
-    checkSession(msg.config)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
-    return true;
-  }
-  return false;
+/** Límites de consultas y del registro local. */
+const LIMITS = Object.freeze({
+  /** Leads activos que muestra el popup. */
+  LEADS_LIST: 15,
+  /** Notas 🐙 leídas de golpe para resolver el estado de esos leads. */
+  LEADS_LIST_NOTES: 200,
+  /** Mensajes leídos del chatter de la oportunidad remota. */
+  REMOTE_CHATTER: 100,
+  /** Entradas del historial del popup. */
+  LOG_ENTRIES: 50,
+  /** Páginas recorridas del listado HTML del portal (fallback de búsqueda). */
+  PORTAL_HTML_PAGES: 10,
 });
 
-function errMsg(err) {
-  return String((err && err.message) || err);
+const BADGE = Object.freeze({ color: '#2e7d32', ms: 8000 });
+
+// ───────────────────────── Mensajería ─────────────────────────
+
+/** Un handler por tipo de mensaje; cada uno devuelve la respuesta (o lanza). */
+const HANDLERS = Object.freeze({
+  [MSG.SYNC_LEADS]: (msg) => syncLeads(msg.origin, msg.leads),
+  [MSG.UPDATE_LEAD]: (msg) => updateLead(msg.origin, msg.lead, msg.destId),
+  [MSG.SYNC_COMMENTS]: (msg) => syncComments(msg.origin, msg.leadId, msg.destId, msg.leadName, msg.comments),
+  [MSG.FIND_REMOTE]: (msg) => findRemote(msg.title, msg.email),
+  [MSG.MARK_LINKED]: (msg) => markLinked(msg.origin, msg.leadId, msg.destId, msg.name),
+  [MSG.PULL_REMOTE_MESSAGES]: (msg) => pullRemoteMessages(msg.destId),
+  [MSG.LIST_LEADS]: () => listActiveLeads(),
+  [MSG.LOG]: (msg) => addLog(msg.entry || {}).then(() => ({ ok: true })),
+  [MSG.CHECK_SESSION]: (msg) => checkSession(msg.config),
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  const handler = msg && HANDLERS[msg.type];
+  if (!handler) return false;
+  Promise.resolve()
+    .then(() => handler(msg))
+    .then(sendResponse)
+    .catch((err) => sendResponse({ ok: false, error: errMsg(err) }));
+  return true; // respuesta asíncrona
+});
+
+async function findRemote(title, email) {
+  const cfg = await getConfig();
+  const destId = await findRemotePortalOpportunity(cfg, title, email);
+  return { ok: true, destId, portalUrl: cfg.portalUrl };
 }
 
-async function getConfig() {
-  const stored = await chrome.storage.local.get('config');
-  return { ...DEFAULTS, ...(stored.config || {}) };
+async function markLinked(origin, leadId, destId, name) {
+  const cfg = await getConfig();
+  await rememberSent(origin, leadId, destId);
+  await addLog({ ok: true, name: name || `lead #${leadId}`, srcId: leadId, destId, origin, action: 'link' });
+  return { ok: true, portalUrl: cfg.portalUrl };
 }
 
-async function portalRpc(baseUrl, path, params) {
-  const url = baseUrl.replace(/\/+$/, '') + path;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ id: rpcId++, jsonrpc: '2.0', method: 'call', params }),
+async function pullRemoteMessages(destId) {
+  const cfg = await getConfig();
+  const result = await fetchRemoteChatter(cfg, destId);
+  if (result === null) return { ok: false, error: 'No se pudo leer el chatter de la oportunidad remota' };
+  return { ok: true, messages: parseRemoteMessages(result) };
+}
+
+// ───────────────────────── Registro local ─────────────────────────
+
+/**
+ * Apunta un lead como enviado/vinculado. `at` conserva la fecha del primer
+ * registro; `destId` se sobreescribe siempre (puede pasar de null a real).
+ */
+async function rememberSent(origin, leadId, destId) {
+  const sent = await readStorage(STORAGE.SENT, {});
+  const key = leadKey(origin, leadId);
+  const prev = sent[key] || {};
+  sent[key] = { ...prev, destId, at: prev.at || new Date().toISOString() };
+  await writeStorage(STORAGE.SENT, sent);
+}
+
+async function addLog(entry) {
+  const log = await readStorage(STORAGE.LOG, []);
+  log.unshift({ at: new Date().toISOString(), ...entry });
+  await writeStorage(STORAGE.LOG, log.slice(0, LIMITS.LOG_ENTRIES));
+}
+
+function flashBadge(text) {
+  chrome.action.setBadgeBackgroundColor({ color: BADGE.color });
+  chrome.action.setBadgeText({ text });
+  setTimeout(() => chrome.action.setBadgeText({ text: '' }), BADGE.ms);
+}
+
+// ───────────────────────── RPC contra Odoo ─────────────────────────
+
+/** JSON-RPC a una instancia Odoo (portal o CRM) con la cookie del navegador. */
+function odooRpc(baseUrl, path, params) {
+  return jsonRpc(stripTrailingSlash(baseUrl) + path, params, { credentials: 'include' });
+}
+
+/** Atajo para /web/dataset/call_kw. */
+function callKw(baseUrl, model, method, args, kwargs) {
+  return odooRpc(baseUrl, `/web/dataset/call_kw/${model}/${method}`, {
+    model,
+    method,
+    args,
+    kwargs: { context: {}, ...(kwargs || {}) },
   });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} al llamar a ${url}`);
-
-  const text = await resp.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Respuesta no JSON de ${url}: probablemente no hay sesión iniciada en odoo.com`);
-  }
-  if (json.error) {
-    const msg = (json.error.data && json.error.data.message) || json.error.message || 'Error JSON-RPC';
-    if (json.error.code === 100 || /session/i.test(msg)) {
-      throw new Error('Sesión de odoo.com caducada: vuelve a iniciar sesión en www.odoo.com');
-    }
-    throw new Error(msg);
-  }
-  return json.result;
 }
 
 /**
@@ -150,19 +151,23 @@ async function checkSession(cfgOverride) {
   try {
     cookie = await chrome.cookies.get({ url: cfg.portalUrl, name: 'session_id' });
     cookieChecked = true;
-  } catch (e) {
+  } catch {
     /* sin acceso a la API de cookies para ese host: lo verificará get_session_info */
   }
   if (cookieChecked && cookie === null) {
-    throw new Error(`No hay cookie de sesión para ${cfg.portalUrl}. Inicia sesión en esa web con este perfil de Chrome.`);
+    throw new Error(
+      `No hay cookie de sesión para ${cfg.portalUrl}. Inicia sesión en esa web con este perfil de Chrome.`
+    );
   }
 
-  const info = await portalRpc(cfg.portalUrl, '/web/session/get_session_info', {});
+  const info = await odooRpc(cfg.portalUrl, '/web/session/get_session_info', {});
   if (!info || !info.uid) {
     throw new Error('La sesión de odoo.com no es válida o ha caducado. Vuelve a iniciar sesión.');
   }
   return { ok: true, uid: info.uid, username: info.username || info.name || '' };
 }
+
+// ───────────────────────── Creación y contacto ─────────────────────────
 
 /**
  * create_opp_portal solo acepta title, contact_name y description (los campos
@@ -170,31 +175,31 @@ async function checkSession(cfgOverride) {
  * en la descripción para no perder información.
  */
 function buildPortalValues(lead, origin, sourceLabel) {
-  const datos = [];
-  if (lead.partner_name) datos.push(`Empresa: ${lead.partner_name}`);
-  if (lead.email_from) datos.push(`Email: ${lead.email_from}`);
-  if (lead.phone) datos.push(`Teléfono: ${lead.phone}`);
-  if (lead.mobile) datos.push(`Móvil: ${lead.mobile}`);
-  if (lead.website) datos.push(`Web: ${lead.website}`);
-  const direccion = [lead.street, lead.street2, lead.zip, lead.city].filter(Boolean).join(', ');
-  if (direccion) datos.push(`Dirección: ${direccion}`);
-  if (lead.country_id) datos.push(`País: ${lead.country_id[1]}`);
-  if (lead.expected_revenue) datos.push(`Ingreso esperado: ${lead.expected_revenue}`);
-  if (lead.user_id) datos.push(`Comercial: ${lead.user_id[1]}`);
+  const lines = [];
+  if (lead.partner_name) lines.push(`Empresa: ${lead.partner_name}`);
+  if (lead.email_from) lines.push(`Email: ${lead.email_from}`);
+  if (lead.phone) lines.push(`Teléfono: ${lead.phone}`);
+  if (lead.mobile) lines.push(`Móvil: ${lead.mobile}`);
+  if (lead.website) lines.push(`Web: ${lead.website}`);
+  const address = [lead.street, lead.street2, lead.zip, lead.city].filter(Boolean).join(', ');
+  if (address) lines.push(`Dirección: ${address}`);
+  if (lead.country_id) lines.push(`País: ${lead.country_id[1]}`);
+  if (lead.expected_revenue) lines.push(`Ingreso esperado: ${lead.expected_revenue}`);
+  if (lead.user_id) lines.push(`Comercial: ${lead.user_id[1]}`);
 
-  const partes = [];
-  if (lead.description) partes.push(lead.description, '');
-  if (datos.length) partes.push(datos.join('\n'), '');
-  partes.push(`Origen: ${sourceLabel || 'Octupus'}`);
-  partes.push(`Sincronizado desde ${origin} (lead #${lead.id})`);
-  partes.push(`${origin}/web#id=${lead.id}&model=crm.lead&view_type=form`);
+  const parts = [];
+  if (lead.description) parts.push(lead.description, '');
+  if (lines.length) parts.push(lines.join('\n'), '');
+  parts.push(`Origen: ${sourceLabel || DEFAULTS.sourceLabel}`);
+  parts.push(`Sincronizado desde ${origin} (lead #${lead.id})`);
+  parts.push(`${origin}/web#id=${lead.id}&model=crm.lead&view_type=form`);
 
   return {
     title: lead.name,
     // create_opp_portal exige contact_name no vacío ("All fields are
     // required!"): fallback al email o a un guion si el lead no tiene nombre
     contact_name: lead.contact_name || lead.partner_name || lead.email_from || '-',
-    description: partes.join('\n'),
+    description: parts.join('\n'),
   };
 }
 
@@ -203,52 +208,44 @@ function buildPortalValues(lead, origin, sourceLabel) {
 const destCountryCache = new Map();
 const destStateCache = new Map();
 
+/** Primer id que devuelve search_read para el dominio, o null (también si falla). */
+async function firstIdMatching(cfg, model, domain) {
+  try {
+    const rows = await callKw(cfg.portalUrl, model, 'search_read', [], { domain, fields: ['id'], limit: 1 });
+    return rows && rows.length ? rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveDestCountryId(cfg, code) {
   if (!code) return null;
   const key = `${cfg.portalUrl}#${code}`;
-  if (destCountryCache.has(key)) return destCountryCache.get(key);
-  let id = null;
-  try {
-    const rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/res.country/search_read', {
-      model: 'res.country',
-      method: 'search_read',
-      args: [],
-      kwargs: { domain: [['code', '=', code]], fields: ['id'], limit: 1, context: {} },
-    });
-    id = rows && rows.length ? rows[0].id : null;
-  } catch (e) {
-    id = null;
+  if (!destCountryCache.has(key)) {
+    destCountryCache.set(key, await firstIdMatching(cfg, 'res.country', [['code', '=', code]]));
   }
-  destCountryCache.set(key, id);
-  return id;
+  return destCountryCache.get(key);
 }
 
 async function resolveDestStateId(cfg, countryId, code, name) {
   if (!countryId || (!code && !name)) return null;
   const key = `${cfg.portalUrl}#${countryId}#${code || ''}#${name || ''}`;
-  if (destStateCache.has(key)) return destStateCache.get(key);
-  let id = null;
-  const domains = [];
-  if (code) domains.push([['country_id', '=', countryId], ['code', '=', code]]);
-  if (name) domains.push([['country_id', '=', countryId], ['name', '=', name]]);
-  for (const domain of domains) {
-    try {
-      const rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/res.country.state/search_read', {
-        model: 'res.country.state',
-        method: 'search_read',
-        args: [],
-        kwargs: { domain, fields: ['id'], limit: 1, context: {} },
-      });
-      if (rows && rows.length) {
-        id = rows[0].id;
-        break;
-      }
-    } catch (e) {
-      /* probar el siguiente criterio */
+  if (!destStateCache.has(key)) {
+    let id = null;
+    if (code)
+      id = await firstIdMatching(cfg, 'res.country.state', [
+        ['country_id', '=', countryId],
+        ['code', '=', code],
+      ]);
+    if (!id && name) {
+      id = await firstIdMatching(cfg, 'res.country.state', [
+        ['country_id', '=', countryId],
+        ['name', '=', name],
+      ]);
     }
+    destStateCache.set(key, id);
   }
-  destStateCache.set(key, id);
-  return id;
+  return destStateCache.get(key);
 }
 
 /**
@@ -262,7 +259,7 @@ async function updateContactDetails(cfg, destId, lead) {
   const stateId = await resolveDestStateId(cfg, countryId, lead.state_code, lead.state_name);
   // Solo campos con valor: lo que el origen no tiene NO debe borrar lo que
   // alguien haya completado a mano en el portal
-  const candidatos = {
+  const candidates = {
     partner_name: lead.partner_name || lead.contact_name,
     phone: lead.phone || lead.mobile,
     email_from: lead.email_from,
@@ -273,168 +270,25 @@ async function updateContactDetails(cfg, destId, lead) {
     state_id: stateId,
     country_id: countryId,
   };
-  const values = {};
-  for (const [campo, valor] of Object.entries(candidatos)) {
-    if (valor) values[campo] = valor;
-  }
+  const values = Object.fromEntries(Object.entries(candidates).filter(([, value]) => Boolean(value)));
   if (!Object.keys(values).length) return;
-  await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/update_contact_details_from_portal', {
-    model: 'crm.lead',
-    method: 'update_contact_details_from_portal',
-    args: [[destId], values],
-    kwargs: { context: {} },
-  });
+  await callKw(cfg.portalUrl, 'crm.lead', 'update_contact_details_from_portal', [[destId], values]);
 }
 
-/** Actualización manual (botón del popup) de un lead ya sincronizado. */
+/** Actualización manual (botón del popup/widget) de un lead ya sincronizado. */
 async function updateLead(origin, lead, destId) {
   const cfg = await getConfig();
   await checkSession();
   await updateContactDetails(cfg, destId, lead);
-  const { sent = {} } = await chrome.storage.local.get('sent');
-  const prev = sent[`${origin}#${lead.id}`] || {};
-  sent[`${origin}#${lead.id}`] = { ...prev, destId, at: prev.at || new Date().toISOString() };
-  await chrome.storage.local.set({ sent });
+  await rememberSent(origin, lead.id, destId);
   await addLog({ ok: true, name: lead.name, srcId: lead.id, destId, origin, action: 'update' });
   return { ok: true, destId };
 }
 
-/** Aproximación del slugify de Odoo para comparar títulos con URLs del portal. */
-function odooSlug(text) {
-  return String(text || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/** Extrae, en orden de aparición, los pares {slug, id} de los enlaces /my/opportunity/. */
-function extractOpportunities(html) {
-  const out = [];
-  const seen = new Set();
-  const re = /\/my\/opportunity\/([^"'?#\s]+)/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    let seg = m[1];
-    try {
-      seg = decodeURIComponent(seg);
-    } catch (e) {
-      /* segmento con % suelto: usar tal cual */
-    }
-    const parts = seg.match(/^(?:(.+)-)?(\d+)$/);
-    if (!parts || !parts[1]) continue;
-    const id = parseInt(parts[2], 10);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push({ slug: parts[1], id });
-  }
-  return out;
-}
-
-/** Escapa los comodines de ilike (%, _) para una comparación literal. */
-function escapeIlike(value) {
-  return String(value).replace(/([%_\\])/g, '\\$1');
-}
-
-/**
- * Tercera capa anti-duplicados: localiza la oportunidad en el portal.
- * website_crm_partner_assign concede a los usuarios portal LECTURA sobre
- * crm.lead (acotada por regla de registro a sus asignadas), así que se busca
- * con search_read y active_test:false (incluye perdidas), por criterios de
- * más a menos específicos:
- *   1. título + email  → mismo negocio, aunque cambie uno de los dos
- *   2. título          → comportamiento clásico
- *   3. email solo      → sobrevive a renombres del título, pero identifica
- *      al cliente y no al negocio: solo se acepta si la coincidencia es
- *      ÚNICA (si el cliente tiene varias oportunidades, es ambiguo).
- * La comprobación de reclamante (bridge) sigue siendo la guarda final.
- * Si la instancia no permite leer crm.lead, se cae al listado HTML.
- */
-async function findRemotePortalOpportunity(cfg, title, email) {
-  const name = String(title || '').trim();
-  const mail = String(email || '').trim();
-  if (!name && !mail) return null;
-
-  const OPP = ['type', '=', 'opportunity'];
-  const porNombre = ['name', '=', name];
-  const porEmail = ['email_from', '=ilike', escapeIlike(mail)];
-
-  const intentos = [];
-  if (name && mail) intentos.push({ domain: [porNombre, porEmail, OPP], soloSiUnica: false });
-  if (name) intentos.push({ domain: [porNombre, OPP], soloSiUnica: false });
-  if (mail) intentos.push({ domain: [porEmail, OPP], soloSiUnica: true });
-
-  for (const { domain, soloSiUnica } of intentos) {
-    let rows;
-    try {
-      rows = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/search_read', {
-        model: 'crm.lead',
-        method: 'search_read',
-        args: [],
-        kwargs: {
-          domain,
-          fields: ['id'],
-          limit: 2,
-          order: 'id desc',
-          context: { active_test: false },
-        },
-      });
-    } catch (e) {
-      /* sin permiso de lectura en esa instancia: usar el listado HTML */
-      return name ? findRemotePortalOpportunityHtml(cfg, name) : null;
-    }
-    if (!Array.isArray(rows)) break;
-    if (rows.length === 1) return rows[0].id;
-    if (rows.length > 1 && !soloSiUnica) return rows[0].id;
-    // >1 resultado con criterio de solo-email: ambiguo → probar siguiente/ninguno
-  }
-  return null;
-}
-
-/**
- * Fallback: el controlador de /my/opportunities no soporta búsqueda por
- * texto — solo sortby/filterby/paginación — así que se recorre el listado
- * ordenado por nombre (sortby=name) cortando al rebasar alfabéticamente el
- * título, y se repasa con filterby=lost (las perdidas no salen del activo).
- */
-const PORTAL_MAX_PAGES = 10;
-
-async function findRemotePortalOpportunityHtml(cfg, title) {
-  const target = odooSlug(title);
-  if (!target) return null;
-  const base = cfg.portalUrl.replace(/\/+$/, '');
-
-  for (const filterby of ['all', 'lost']) {
-    for (let page = 1; page <= PORTAL_MAX_PAGES; page++) {
-      const path = page === 1 ? '/my/opportunities' : `/my/opportunities/page/${page}`;
-      const url = `${base}${path}?sortby=name${filterby === 'lost' ? '&filterby=lost' : ''}`;
-      let html = null;
-      try {
-        const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) break;
-        html = await resp.text();
-      } catch (e) {
-        break;
-      }
-      const entries = extractOpportunities(html);
-      if (!entries.length) break; // fin del listado
-      const hit = entries.find((e) => e.slug === target);
-      if (hit) return hit.id;
-      // Listado alfabético: si el último ya supera al objetivo, no está
-      if (entries[entries.length - 1].slug > target) break;
-    }
-  }
-  return null;
-}
-
 async function createOppPortal(cfg, lead, origin) {
-  const result = await portalRpc(cfg.portalUrl, '/web/dataset/call_kw/crm.lead/create_opp_portal', {
-    model: 'crm.lead',
-    method: 'create_opp_portal',
-    args: [buildPortalValues(lead, origin, cfg.sourceLabel)],
-    kwargs: { context: {} },
-  });
+  const result = await callKw(cfg.portalUrl, 'crm.lead', 'create_opp_portal', [
+    buildPortalValues(lead, origin, cfg.sourceLabel),
+  ]);
   if (result && result.errors) {
     throw new Error(typeof result.errors === 'string' ? result.errors : JSON.stringify(result.errors));
   }
@@ -449,11 +303,10 @@ async function syncLeads(origin, leads) {
   // Registro local: solo cuenta como "ya enviado" si tiene ID remoto real.
   // Las entradas con destId nulo se reintentan (la búsqueda por título del
   // bridge y la auto-curación de abajo evitan duplicar).
-  const { sent = {} } = await chrome.storage.local.get('sent');
-  const already = leads
-    .filter((l) => sent[`${origin}#${l.id}`] && sent[`${origin}#${l.id}`].destId)
-    .map((l) => ({ srcId: l.id, destId: sent[`${origin}#${l.id}`].destId }));
-  const pending = leads.filter((l) => !(sent[`${origin}#${l.id}`] && sent[`${origin}#${l.id}`].destId));
+  const sent = await readStorage(STORAGE.SENT, {});
+  const knownDestId = (lead) => (sent[leadKey(origin, lead.id)] || {}).destId || null;
+  const already = leads.filter(knownDestId).map((lead) => ({ srcId: lead.id, destId: knownDestId(lead) }));
+  const pending = leads.filter((lead) => !knownDestId(lead));
   if (!pending.length) return { ok: true, created: [], already, portalUrl: cfg.portalUrl };
 
   try {
@@ -482,21 +335,108 @@ async function syncLeads(origin, leads) {
           warn = `Contacto no actualizado: ${errMsg(err)}`;
         }
       }
-      sent[`${origin}#${lead.id}`] = { destId, at: new Date().toISOString() };
+      await rememberSent(origin, lead.id, destId);
       created.push({ srcId: lead.id, destId });
       await addLog({ ok: true, name: lead.name, srcId: lead.id, destId, origin, warn });
     } catch (err) {
       await addLog({ ok: false, name: lead.name, srcId: lead.id, origin, error: errMsg(err) });
     }
   }
-  await chrome.storage.local.set({ sent });
   if (created.length) flashBadge(String(created.length));
   return { ok: true, created, already, portalUrl: cfg.portalUrl };
 }
 
+// ───────────────────────── Búsqueda en el portal ─────────────────────────
+
+/**
+ * Tercera capa anti-duplicados: localiza la oportunidad en el portal.
+ * website_crm_partner_assign concede a los usuarios portal LECTURA sobre
+ * crm.lead (acotada por regla de registro a sus asignadas), así que se busca
+ * con search_read y active_test:false (incluye perdidas), por criterios de
+ * más a menos específicos:
+ *   1. título + email  → mismo negocio, aunque cambie uno de los dos
+ *   2. título          → comportamiento clásico
+ *   3. email solo      → sobrevive a renombres del título, pero identifica
+ *      al cliente y no al negocio: solo se acepta si la coincidencia es
+ *      ÚNICA (si el cliente tiene varias oportunidades, es ambiguo).
+ * La comprobación de reclamante (bridge) sigue siendo la guarda final.
+ * Si la instancia no permite leer crm.lead, se cae al listado HTML.
+ */
+async function findRemotePortalOpportunity(cfg, title, email) {
+  const name = String(title || '').trim();
+  const mail = String(email || '').trim();
+  if (!name && !mail) return null;
+
+  const isOpportunity = ['type', '=', 'opportunity'];
+  const byName = ['name', '=', name];
+  const byEmail = ['email_from', '=ilike', escapeIlike(mail)];
+
+  const attempts = [];
+  if (name && mail) attempts.push({ domain: [byName, byEmail, isOpportunity], onlyIfUnique: false });
+  if (name) attempts.push({ domain: [byName, isOpportunity], onlyIfUnique: false });
+  if (mail) attempts.push({ domain: [byEmail, isOpportunity], onlyIfUnique: true });
+
+  for (const { domain, onlyIfUnique } of attempts) {
+    let rows;
+    try {
+      rows = await callKw(cfg.portalUrl, 'crm.lead', 'search_read', [], {
+        domain,
+        fields: ['id'],
+        limit: 2,
+        order: 'id desc',
+        context: { active_test: false },
+      });
+    } catch {
+      /* sin permiso de lectura en esa instancia: usar el listado HTML */
+      return name ? findRemotePortalOpportunityHtml(cfg, name) : null;
+    }
+    if (!Array.isArray(rows)) break;
+    if (rows.length === 1) return rows[0].id;
+    if (rows.length > 1 && !onlyIfUnique) return rows[0].id;
+    // >1 resultado con criterio de solo-email: ambiguo → probar siguiente/ninguno
+  }
+  return null;
+}
+
+/**
+ * Fallback: el controlador de /my/opportunities no soporta búsqueda por
+ * texto — solo sortby/filterby/paginación — así que se recorre el listado
+ * ordenado por nombre (sortby=name) cortando al rebasar alfabéticamente el
+ * título, y se repasa con filterby=lost (las perdidas no salen del activo).
+ */
+async function findRemotePortalOpportunityHtml(cfg, title) {
+  const target = odooSlug(title);
+  if (!target) return null;
+  const base = stripTrailingSlash(cfg.portalUrl);
+
+  for (const filterby of ['all', 'lost']) {
+    for (let page = 1; page <= LIMITS.PORTAL_HTML_PAGES; page++) {
+      const path = page === 1 ? '/my/opportunities' : `/my/opportunities/page/${page}`;
+      const url = `${base}${path}?sortby=name${filterby === 'lost' ? '&filterby=lost' : ''}`;
+      let html;
+      try {
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) break;
+        html = await resp.text();
+      } catch {
+        break;
+      }
+      const entries = extractOpportunities(html);
+      if (!entries.length) break; // fin del listado
+      const hit = entries.find((entry) => entry.slug === target);
+      if (hit) return hit.id;
+      // Listado alfabético: si el último ya supera al objetivo, no está
+      if (entries[entries.length - 1].slug > target) break;
+    }
+  }
+  return null;
+}
+
+// ───────────────────────── Chatter remoto ─────────────────────────
+
 /** Publica un comentario en el chatter de la oportunidad remota (portal). */
 function postRemoteComment(cfg, destId, body) {
-  return portalRpc(cfg.portalUrl, '/mail/message/post', {
+  return odooRpc(cfg.portalUrl, '/mail/message/post', {
     post_data: {
       body,
       email_add_signature: true,
@@ -514,7 +454,7 @@ function postRemoteComment(cfg, destId, body) {
  * endpoint que responda). Devuelve null si ninguno funcionó.
  */
 async function fetchRemoteChatter(cfg, destId) {
-  const intentos = [
+  const attempts = [
     // Odoo 18/19 saas (www.odoo.com actual)
     [
       '/mail/action',
@@ -522,7 +462,12 @@ async function fetchRemoteChatter(cfg, destId) {
         fetch_params: [
           [
             '/mail/chatter_fetch',
-            { thread_id: destId, thread_model: 'crm.lead', rating_include: true, fetch_params: { limit: 100 } },
+            {
+              thread_id: destId,
+              thread_model: 'crm.lead',
+              rating_include: true,
+              fetch_params: { limit: LIMITS.REMOTE_CHATTER },
+            },
             1,
           ],
         ],
@@ -530,13 +475,13 @@ async function fetchRemoteChatter(cfg, destId) {
       },
     ],
     // Portales más antiguos
-    ['/mail/chatter_fetch', { res_model: 'crm.lead', res_id: destId, limit: 100 }],
+    ['/mail/chatter_fetch', { res_model: 'crm.lead', res_id: destId, limit: LIMITS.REMOTE_CHATTER }],
   ];
-  for (const [path, params] of intentos) {
+  for (const [path, params] of attempts) {
     try {
-      const result = await portalRpc(cfg.portalUrl, path, params);
+      const result = await odooRpc(cfg.portalUrl, path, params);
       if (result !== undefined && result !== null) return result;
-    } catch (e) {
+    } catch {
       /* probar el siguiente endpoint */
     }
   }
@@ -551,56 +496,7 @@ async function fetchRemoteChatter(cfg, destId) {
 async function fetchRemoteMarkers(cfg, destId) {
   const result = await fetchRemoteChatter(cfg, destId);
   if (result === null) return null;
-  const ids = new Set();
-  const re = /\[src#(\d+)\]/g;
-  const text = JSON.stringify(result);
-  let m;
-  while ((m = re.exec(text)) !== null) ids.add(parseInt(m[1], 10));
-  return ids;
-}
-
-/**
- * Normaliza los mensajes del payload del chatter remoto a
- * {id, body, author, date}. Soporta el formato mail.Store de Odoo 18/19
- * ("mail.message" + "res.partner") y el clásico {messages: [...]}.
- */
-function parseRemoteMessages(result) {
-  let messages = null;
-  let partners = [];
-  if (result && Array.isArray(result['mail.message'])) {
-    messages = result['mail.message'];
-    partners = Array.isArray(result['res.partner']) ? result['res.partner'] : [];
-  } else if (result && Array.isArray(result.messages)) {
-    messages = result.messages;
-  }
-  if (!messages) return [];
-
-  const partnerName = (pid) => {
-    const p = partners.find((x) => x && x.id === pid);
-    return (p && (p.name || p.display_name)) || null;
-  };
-
-  return messages
-    .map((m) => {
-      if (!m || !m.id || !m.body) return null;
-      // comment = mensajes del chatter; email = correos del cliente (¡los más valiosos!)
-      if (m.message_type && m.message_type !== 'comment' && m.message_type !== 'email') return null;
-      // En el formato mail.Store el body llega como tupla ["markup", "<p>…</p>"]
-      let body = m.body;
-      if (Array.isArray(body)) {
-        body = body[0] === 'markup' && body.length > 1 ? body.slice(1).join('') : body.join('');
-      }
-      if (!body || typeof body !== 'string') return null;
-      let author = null;
-      if (Array.isArray(m.author_id)) author = m.author_id[1];
-      else if (m.author && typeof m.author === 'object') author = m.author.name || partnerName(m.author.id);
-      else if (typeof m.author_id === 'number') author = partnerName(m.author_id);
-      else if (m.author_id && typeof m.author_id === 'object') {
-        author = m.author_id.name || partnerName(m.author_id.id);
-      }
-      return { id: m.id, body, author: author || 'Odoo', date: m.date || m.datetime || '' };
-    })
-    .filter(Boolean);
+  return new Set(collectIds(JSON.stringify(result), RE_SRC_MARKER));
 }
 
 /**
@@ -611,26 +507,27 @@ function parseRemoteMessages(result) {
 async function syncComments(origin, leadId, destId, leadName, comments) {
   if (!destId || !Array.isArray(comments) || !comments.length) return { ok: true, posted: 0 };
   const cfg = await getConfig();
+  const name = leadName || `lead #${leadId}`;
 
-  const { sentComments = {} } = await chrome.storage.local.get('sentComments');
-  const key = `${origin}#${leadId}`;
+  const sentComments = await readStorage(STORAGE.SENT_COMMENTS, {});
+  const key = leadKey(origin, leadId);
   const done = new Set(sentComments[key] || []);
 
   // Unión con lo ya publicado en el portal (por cualquier usuario/navegador)
-  const remotos = await fetchRemoteMarkers(cfg, destId);
-  if (remotos) for (const id of remotos) done.add(id);
+  const remoteIds = await fetchRemoteMarkers(cfg, destId);
+  if (remoteIds) for (const id of remoteIds) done.add(id);
 
   let posted = 0;
-  for (const c of comments) {
-    if (!c || !c.id || !c.body || done.has(c.id)) continue;
+  for (const comment of comments) {
+    if (!comment || !comment.id || !comment.body || done.has(comment.id)) continue;
     try {
-      await postRemoteComment(cfg, destId, c.body);
-      done.add(c.id);
+      await postRemoteComment(cfg, destId, comment.body);
+      done.add(comment.id);
       posted++;
     } catch (err) {
       await addLog({
         ok: false,
-        name: leadName || `lead #${leadId}`,
+        name,
         srcId: leadId,
         origin,
         error: `Comentario no enviado: ${errMsg(err)}`,
@@ -640,20 +537,14 @@ async function syncComments(origin, leadId, destId, leadName, comments) {
   }
 
   sentComments[key] = [...done];
-  await chrome.storage.local.set({ sentComments });
+  await writeStorage(STORAGE.SENT_COMMENTS, sentComments);
   if (posted) {
-    await addLog({
-      ok: true,
-      name: leadName || `lead #${leadId}`,
-      srcId: leadId,
-      destId,
-      origin,
-      action: 'comments',
-      count: posted,
-    });
+    await addLog({ ok: true, name, srcId: leadId, destId, origin, action: 'comments', count: posted });
   }
   return { ok: true, posted };
 }
+
+// ───────────────────────── Listado del CRM ─────────────────────────
 
 /**
  * Lista los leads/oportunidades activos del CRM de Octupus (con la sesión
@@ -664,76 +555,57 @@ async function listActiveLeads() {
   const cfg = await getConfig();
   let leads;
   try {
-    leads = await portalRpc(cfg.crmUrl, '/web/dataset/call_kw/crm.lead/search_read', {
-      model: 'crm.lead',
-      method: 'search_read',
-      args: [],
-      kwargs: {
-        domain: [['type', 'in', ['lead', 'opportunity']]],
-        fields: ['id', 'name', 'type', 'stage_id', 'partner_name', 'contact_name'],
-        order: 'write_date desc',
-        limit: 15,
-        context: {},
-      },
+    leads = await callKw(cfg.crmUrl, 'crm.lead', 'search_read', [], {
+      domain: [['type', 'in', ['lead', 'opportunity']]],
+      fields: ['id', 'name', 'type', 'stage_id', 'partner_name', 'contact_name'],
+      order: 'write_date desc',
+      limit: LIMITS.LEADS_LIST,
     });
   } catch (err) {
-    throw new Error(`CRM (${cfg.crmUrl}): ${errMsg(err)}`);
+    throw new Error(`CRM (${cfg.crmUrl}): ${errMsg(err)}`, { cause: err });
   }
+  leads = leads || [];
 
-  // Estado de sincronización de todos los listados en una consulta
-  const syncMap = {};
-  const ids = (leads || []).map((l) => l.id);
-  if (ids.length) {
-    try {
-      const notas = await portalRpc(cfg.crmUrl, '/web/dataset/call_kw/mail.message/search_read', {
-        model: 'mail.message',
-        method: 'search_read',
-        args: [],
-        kwargs: {
-          domain: [
-            ['model', '=', 'crm.lead'],
-            ['res_id', 'in', ids],
-            ['body', 'like', 'Octupus Lead Sync'],
-            ['body', 'like', 'my/opportunity/'],
-          ],
-          fields: ['res_id', 'body'],
-          limit: 200,
-          context: {},
-        },
-      });
-      for (const n of notas || []) {
-        const body = String(n.body || '');
-        if (body.includes('[odoo#')) continue; // nota traída, no de vinculación
-        const m = body.match(/my\/opportunity\/(\d+)/);
-        if (m && !syncMap[n.res_id]) syncMap[n.res_id] = parseInt(m[1], 10);
-      }
-    } catch (e) {
-      /* sin estado de sincronización: la lista sigue siendo útil */
-    }
-  }
+  const syncedById = await fetchSyncState(
+    cfg,
+    leads.map((lead) => lead.id)
+  );
 
   return {
     ok: true,
     crmUrl: cfg.crmUrl,
-    leads: (leads || []).map((l) => ({
-      id: l.id,
-      name: l.name,
-      type: l.type,
-      stage: (l.stage_id && l.stage_id[1]) || '',
-      contact: l.partner_name || l.contact_name || '',
-      synced: syncMap[l.id] || null,
+    leads: leads.map((lead) => ({
+      id: lead.id,
+      name: lead.name,
+      type: lead.type,
+      stage: (lead.stage_id && lead.stage_id[1]) || '',
+      contact: lead.partner_name || lead.contact_name || '',
+      synced: syncedById.get(lead.id) || null,
     })),
   };
 }
 
-async function addLog(entry) {
-  const { log = [] } = await chrome.storage.local.get('log');
-  log.unshift({ at: new Date().toISOString(), ...entry });
-  await chrome.storage.local.set({ log: log.slice(0, 50) });
-}
-
-function flashBadge(text) {
-  chrome.action.setBadgeBackgroundColor({ color: '#2e7d32' });
-  chrome.action.setBadgeText({ text });
-  setTimeout(() => chrome.action.setBadgeText({ text: '' }), 8000);
+/** Map leadId → destId a partir de las notas 🐙 de vinculación de esos leads. */
+async function fetchSyncState(cfg, leadIds) {
+  const syncedById = new Map();
+  if (!leadIds.length) return syncedById;
+  try {
+    const notes = await callKw(cfg.crmUrl, 'mail.message', 'search_read', [], {
+      domain: [
+        ['model', '=', 'crm.lead'],
+        ['res_id', 'in', leadIds],
+        ['body', 'like', MARK.SIGNATURE],
+        ['body', 'like', MARK.PORTAL_LINK],
+      ],
+      fields: ['res_id', 'body'],
+      limit: LIMITS.LEADS_LIST_NOTES,
+    });
+    for (const note of notes || []) {
+      const destId = linkedPortalId(note.body);
+      if (destId && !syncedById.has(note.res_id)) syncedById.set(note.res_id, destId);
+    }
+  } catch {
+    /* sin estado de sincronización: la lista sigue siendo útil */
+  }
+  return syncedById;
 }

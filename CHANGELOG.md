@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.1 — 2026-09-09
+
+### Cambiado
+- **Refactor de buenas prácticas** (mismo comportamiento para el usuario,
+  salvo lo indicado en Corregido): nuevo `src/shared.js` con las constantes
+  (tipos de mensaje, claves de storage, marcas de trazabilidad), los helpers
+  puros y el transporte JSON-RPC que antes estaban repetidos en background,
+  bridge, popup y opciones. Despacho de mensajes por tabla en el service
+  worker y el content script, acciones del widget y del popup con un
+  esqueleto común, límites y colores como constantes con nombre, y CSS del
+  popup y de opciones en archivos propios.
+- **Tooling**: `package.json` con ESLint, Prettier y tests unitarios de
+  `shared.js` (`npm run check`), más `.editorconfig`. Sin paso de build: la
+  extensión sigue cargándose descomprimida tal cual.
+
+### Corregido
+- **Errores HTTP del CRM de origen**: el bridge distingue una respuesta no
+  JSON (página de login, 404, 500) de un error JSON-RPC y muestra un mensaje
+  claro en lugar de un `SyntaxError` genérico. La sesión caducada se detecta
+  igual en el portal y en el CRM.
+- **Permiso de host del CRM**: al guardar Opciones se pide permiso también
+  para la URL del CRM (no solo la del portal) cuando no es `*.odoo.com`, y
+  se valida que ambas sean direcciones http(s). Antes el listado de leads
+  fallaba sin aviso con un CRM en dominio propio.
+
 ## 1.5.0 — 2026-07-27
 
 ### Añadido

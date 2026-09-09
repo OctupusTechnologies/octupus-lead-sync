@@ -1,0 +1,19 @@
+{
+  "name": "octupus-lead-sync",
+  "private": true,
+  "description": "Extensión de Chrome (MV3) que sincroniza leads del CRM de Odoo con el portal de partners de odoo.com. Sin build: package.json solo aporta lint, formato y tests.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --write src test eslint.config.mjs manifest.json package.json",
+    "format:check": "prettier --check src test eslint.config.mjs manifest.json package.json",
+    "test": "node --test",
+    "check": "npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6"
+  }
+}

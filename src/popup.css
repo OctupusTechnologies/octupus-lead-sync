@@ -1,0 +1,177 @@
+body {
+  width: 340px;
+  margin: 0;
+  padding: 0.8rem;
+  font-size: 0.85rem;
+}
+
+h1 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge.on {
+  background: #e6f4ea;
+  color: var(--ols-ok);
+}
+
+.toolbar,
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toolbar {
+  margin-bottom: 0.6rem;
+}
+
+.section-head {
+  margin-top: 0.7rem;
+}
+
+button {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--ols-border);
+  background: #fff;
+  font-size: 0.8rem;
+}
+
+button.mini {
+  padding: 0.1rem 0.5rem;
+}
+
+/* Sesión */
+
+.session {
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--ols-muted);
+}
+
+.session.ok {
+  color: var(--ols-ok);
+}
+
+.session.error {
+  color: var(--ols-error);
+}
+
+/* Acciones sobre el lead abierto */
+
+.manual {
+  margin-bottom: 0.7rem;
+}
+
+button.send {
+  width: 100%;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+button.send.btn-secondary {
+  font-weight: 500;
+  margin-top: 0.4rem;
+}
+
+.manual-status {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  min-height: 1em;
+}
+
+.manual-status.ok {
+  color: var(--ols-ok);
+}
+
+.manual-status.error {
+  color: var(--ols-error);
+}
+
+/* Listas (leads e historial) */
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+li {
+  padding: 0.45rem 0.3rem;
+  border-bottom: 1px solid var(--ols-divider);
+  line-height: 1.35;
+}
+
+.empty {
+  color: var(--ols-muted);
+  padding: 0.6rem 0;
+}
+
+ul.leads {
+  max-height: 190px;
+}
+
+ul.leads li {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+ul.leads li:hover {
+  background: var(--ols-hover);
+}
+
+ul.leads .lead-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+ul.leads .tag {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 8px;
+  background: var(--ols-divider);
+  color: var(--ols-muted);
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+ul.leads .tag.sync {
+  background: #e6f4ea;
+  color: var(--ols-ok);
+}
+
+li .name {
+  font-weight: 600;
+}
+
+li .meta {
+  color: var(--ols-muted);
+  font-size: 0.75rem;
+}
+
+li.ok .status {
+  color: var(--ols-ok);
+}
+
+li.error .status {
+  color: var(--ols-error);
+}

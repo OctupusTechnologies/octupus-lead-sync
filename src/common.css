@@ -1,0 +1,41 @@
+/* Octupus Lead Sync — paleta y base compartida por popup y opciones */
+
+:root {
+  --ols-brand: #714b67;
+  --ols-text: #1f2430;
+  --ols-muted: #6b7280;
+  --ols-ok: #2e7d32;
+  --ols-error: #c62828;
+  --ols-warn: #b26a00;
+  --ols-border: #c4c9d4;
+  --ols-surface: #e8eaf0;
+  --ols-divider: #eef0f4;
+  --ols-hover: #f4f5f8;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--ols-text);
+}
+
+button {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--ols-brand);
+  color: #fff;
+  border: none;
+}
+
+.btn-secondary {
+  background: var(--ols-surface);
+  color: var(--ols-text);
+  border: none;
+}

@@ -524,11 +524,37 @@ function octupusCallKw(model, method, args, kwargs) {
   });
 }
 
+const octupusLeadFieldsCache = new Map(); // origin -> Set de campos existentes, o null si no se pudo comprobar
+
+/**
+ * Subconjunto de OCTUPUS_LEAD_FIELDS que existe realmente en crm.lead de esta
+ * instancia. No todas las versiones/personalizaciones traen todos los campos
+ * (p. ej. 'mobile'), y pedir uno inexistente hace fallar el search_read
+ * entero ("Invalid field 'x' on 'crm.lead'"), así que se comprueba una vez
+ * por origin con fields_get y se cachea.
+ */
+async function octupusValidLeadFields() {
+  const origin = window.location.origin;
+  if (!octupusLeadFieldsCache.has(origin)) {
+    let valid = null;
+    try {
+      const fields = await octupusCallKw('crm.lead', 'fields_get', [OCTUPUS_LEAD_FIELDS, ['type']]);
+      valid = new Set(Object.keys(fields || {}));
+    } catch {
+      /* no se pudo comprobar: se usa la lista completa tal cual */
+    }
+    octupusLeadFieldsCache.set(origin, valid);
+  }
+  return octupusLeadFieldsCache.get(origin);
+}
+
 async function octupusReadLeads(ids) {
+  const valid = await octupusValidLeadFields();
+  const fields = valid ? OCTUPUS_LEAD_FIELDS.filter((f) => valid.has(f)) : OCTUPUS_LEAD_FIELDS;
   // search_read en lugar de read: tolera leads eliminados por fusión (merge)
   const result = await octupusCallKw('crm.lead', 'search_read', [], {
     domain: [['id', 'in', ids]],
-    fields: OCTUPUS_LEAD_FIELDS,
+    fields,
   });
   return octupusEnrichLeads(result || []);
 }
